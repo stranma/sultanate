@@ -22,6 +22,17 @@ scope.
 Start with `SULTANATE.md` -- it defines all components and how they fit
 together.
 
+## Implementation Notes
+
+**Janissary + Sandcat:** The [Sandcat](https://github.com/softwaremill/sandcat) project
+could serve as a foundation for Janissary. Sandcat already provides the core primitives
+Janissary needs: a transparent mitmproxy-based egress proxy with allowlist/deny-list
+network rules, and a credential injection system that substitutes placeholders with real
+secrets at the proxy level (so containers never see actual credentials). The WireGuard
+tunneling approach ensures all container traffic is routed through the proxy without
+per-tool configuration. Janissary's additional scope -- Kashif content inspection,
+Sentinel advisory layer, Divan integration -- would be built on top.
+
 ## Planned repo structure
 
 Once implementation begins, component repos become git submodules here:
