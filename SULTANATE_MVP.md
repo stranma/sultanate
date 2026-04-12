@@ -144,10 +144,11 @@ design. Sultan has SSH to the host as fallback.
 
 ## Traffic Rules (Janissary)
 
-1. **Whitelist** -- domain on province's allowlist? Pass all traffic.
-2. **Non-whitelist read** -- GET/HEAD to unknown domain? Pass (browsing, docs).
-3. **Non-whitelist write** -- POST/PUT/PATCH/DELETE to unknown domain? Block.
-4. **Appeal** -- agent appeals a block with justification. Stored by Janissary,
+1. **Blacklist** -- domain on global blacklist? Block all traffic. Overrides whitelist.
+2. **Whitelist** -- domain on province's allowlist? Pass all traffic.
+3. **Non-whitelist read** -- GET/HEAD to unknown domain? Pass (browsing, docs).
+4. **Non-whitelist write** -- POST/PUT/PATCH/DELETE to unknown domain? Block.
+5. **Appeal** -- agent appeals a block with justification. Stored by Janissary,
    relayed by Vizier to Sultan via Telegram. Sultan approves (one-time or
    whitelist) or denies.
 

@@ -12,14 +12,14 @@ content evaluation, no outbound access of its own.
 
 Evaluated in order per request:
 
-1. **Whitelist** -- domain on the source's allowlist? Pass all traffic
+1. **Blacklist** -- domain on the global blacklist? Block all traffic
+   (any method, including GET). Overrides whitelist.
+2. **Whitelist** -- domain on the source's allowlist? Pass all traffic
    (any HTTP method).
-2. **Read-only pass** -- GET or HEAD to a non-whitelisted domain? Pass.
+3. **Read-only pass** -- GET or HEAD to a non-whitelisted domain? Pass.
    Agents can browse, read docs, download packages.
-3. **Write block** -- POST, PUT, PATCH, DELETE to a non-whitelisted domain?
+4. **Write block** -- POST, PUT, PATCH, DELETE to a non-whitelisted domain?
    Block. Return 403 with a message pointing the agent to the appeal tool.
-4. **Blacklist** -- domain on the global blacklist? Block all traffic
-   (any method, including GET). Known exfiltration endpoints.
 
 Janissary does not inspect payloads, evaluate content, or make judgment
 calls. It reads tables and applies them by source IP.
