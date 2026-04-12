@@ -4,9 +4,15 @@
 
 ## What Janissary Is
 
-A dumb, deterministic forward proxy. The only internet exit for all provinces
-and Vizier. Reads all state from Divan (shared state store). No LLM, no
-content evaluation, no outbound access of its own.
+A dumb, deterministic transparent proxy (WireGuard). The only internet exit
+for all provinces and Vizier. Based on a fork of Sandcat (VirtusLab,
+https://github.com/VirtusLab/sandcat), using WireGuard transparent proxy
+mode. Reads all state from Divan (shared state store). No LLM, no content
+evaluation, no outbound access of its own.
+
+Provinces must trust the Sultanate CA certificate for HTTPS interception to
+work. The CA cert is generated at deploy time and distributed to all province
+containers.
 
 ## Traffic Rules
 
@@ -60,8 +66,8 @@ values.
 
 When a write request is blocked:
 
-1. Agent calls `appeal_request(url, method, justification)` via Janissary
-   MCP tool
+1. Agent calls `appeal_request(url, method, justification)` via MCP tool
+   (which calls Janissary's HTTP API)
 2. Janissary writes the appeal to Divan (`/appeals`)
 3. Vizier polls Divan for pending appeals, relays to Sultan via Telegram
 4. Sultan responds to Vizier: approve (one-time), whitelist (permanent),
@@ -72,9 +78,10 @@ When a write request is blocked:
 Agents can also ask Sultan directly via Telegram to request a permanent
 whitelist addition. Sultan tells Sentinel, Sentinel updates config.
 
-### MCP Tool
+### HTTP API
 
-Janissary provides an MCP server available to all provinces and Vizier:
+Janissary provides an HTTP API available to all provinces and Vizier.
+MCP tools in provinces call this HTTP API:
 
 ```
 appeal_request(
@@ -96,15 +103,18 @@ request_access(
 
 Routes to Sultan via Vizier. For new credentials, Sultan tells Sentinel.
 
-For non-MCP runtimes, both tools are backed by Janissary's HTTP API.
+Both tools are backed by Janissary's HTTP API. MCP tools in provinces wrap
+these endpoints for agent convenience.
 
 ## HTTPS Handling
 
-Janissary supports CONNECT tunneling for HTTPS. It sees the destination
-domain (from the CONNECT request) but not the encrypted payload. Traffic
-rules are applied based on domain only. Credential injection for HTTPS
-works by terminating TLS at the proxy (MITM with a Sultanate CA cert
-installed in province containers).
+Janissary performs full MITM on all HTTPS traffic using the Sultanate CA
+certificate (installed in all province containers). mitmproxy decrypts
+every TLS connection, applies all 4 traffic rules (blacklist, whitelist,
+read-only pass, write-block) uniformly to both HTTP and HTTPS, then
+re-encrypts to the upstream server. Credential injection works on HTTPS
+because the request is fully visible after decryption. Domains that break
+under MITM (cert pinning) can be added to a passthrough list.
 
 ## Divan Integration
 
@@ -151,13 +161,13 @@ handled at the Docker network level by Sentinel:
 ## Phase 1 Scope
 
 **In scope:**
-- HTTP/HTTPS forward proxy with CONNECT tunnel support
+- HTTP/HTTPS transparent proxy (WireGuard) with CONNECT tunnel support
 - Per-source whitelists (pass all traffic to listed domains)
 - Read-only pass for non-whitelisted domains (GET/HEAD only)
 - Write block for non-whitelisted domains (POST/PUT/PATCH/DELETE)
 - Global blacklist (block all methods)
 - Credential injection from Divan grants
-- MCP tool for appeals and access requests
+- HTTP API for appeals and access requests (called by MCP tools in provinces)
 - Appeal storage and decision polling via Divan
 - Divan polling with local cache, fail-closed
 - Audit log of all traffic decisions

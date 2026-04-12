@@ -7,66 +7,63 @@
 
 ---
 
-## 1. Sandcat Integration Approach
+## 1. Sandcat Fork Approach
 
-[Sandcat](https://github.com/VirtusLab/sandcat) (VirtusLab) is a
-mitmproxy-based dev container sandbox that provides:
+Janissary is a **fork** of [Sandcat](https://github.com/VirtusLab/sandcat)
+(VirtusLab, Apache 2.0 license). Sandcat is a mitmproxy-based dev container
+sandbox that transparently intercepts all container traffic via WireGuard.
+Janissary extends it with multi-province support, Divan-driven dynamic
+configuration, credential injection, an appeal system, and audit logging.
 
-- **Transparent proxy via WireGuard** -- all container traffic routed through
-  mitmproxy without per-tool proxy configuration
-- **Python mitmproxy addon** (`mitmproxy_addon.py`) with `request()` and
-  `dns_request()` hooks for network rule evaluation (allow/deny, first-match-wins
-  via `fnmatch` glob patterns)
-- **Secret substitution** -- placeholder strings in env vars
-  (`SANDCAT_PLACEHOLDER_<NAME>`) replaced with real values at proxy level,
-  scoped to allowed destination hosts
-- **Docker Compose setup** -- `wg-client` (WireGuard + iptables kill-switch),
-  `mitmproxy` container, shared volume for CA cert and env
+### What Janissary keeps from Sandcat
 
-### What Janissary reuses from Sandcat
+| Sandcat feature | Janissary usage |
+|-----------------|-----------------|
+| WireGuard transparent proxy (`wg-client` + iptables) | Kept as-is. Province traffic routed through mitmproxy without HTTP_PROXY env vars. |
+| Full MITM on all HTTPS (CA cert trusted by containers) | Kept as-is. All TLS connections are decrypted and inspected. |
+| mitmproxy addon pattern (`request()` hook, class structure) | `JanissaryAddon` class inherits the addon pattern from `SandcatAddon`. |
+| CA certificate generation and distribution | Kept. Sultanate CA generated at deploy time, mounted into all province containers. |
+| iptables kill-switch (fail-closed when WireGuard down) | Kept as-is. If tunnel drops, all province egress is dropped. |
+| Docker Compose orchestration (`wg-client` + `mitmproxy` containers) | Kept. Extended with Divan, per-province wg-client sidecars. |
 
-Janissary adopts Sandcat's **mitmproxy addon architecture pattern**:
+### What Janissary replaces in the fork
 
-| Sandcat pattern | Janissary equivalent |
-|-----------------|---------------------|
-| `SandcatAddon` class with `request()` hook | `JanissaryAddon` class with `request()` and `http_connect()` hooks |
-| `_is_request_allowed(method, host)` | `_evaluate_traffic_rules(source_ip, method, host)` |
-| `_substitute_secrets()` placeholder replacement | `_inject_credentials()` header injection from Divan grants |
-| File-based settings (`settings.json`) | Divan polling (`GET /janissary/state`) |
-| `fnmatch` glob domain matching | Exact domain string equality |
-| `dns_request()` hook for DNS filtering | Not used (provinces use HTTP_PROXY, not transparent mode) |
-| `load()` reads settings once at startup | `running()` starts background polling thread |
+| Sandcat feature | Janissary replacement |
+|-----------------|-----------------------|
+| File-based `settings.json` (read once at startup) | Divan API polling (5s interval, background thread via `DivanPoller`) |
+| Single agent container | Multi-province: source IP awareness, per-province traffic rules and grants |
+| `_substitute_secrets()` placeholder replacement | `_inject_credentials()` direct HTTP header injection (agent never sees credential) |
+| `fnmatch` glob domain matching | Exact string equality (case-insensitive, trailing dot stripped) |
+| `dns_request()` hook for DNS filtering | Not needed (WireGuard handles DNS routing) |
+| `load(loader)` reads settings once | `running()` starts `DivanPoller` background thread |
+| No appeal system | FastAPI appeal API on port 8081 |
+| No audit logging | JSONL audit log of every request decision |
+| Static config (read once) | Dynamic polling with fail-closed on fresh start |
 
-### What Janissary does NOT reuse
-
-- **WireGuard transparent mode** -- Janissary runs mitmproxy in **regular
-  forward proxy mode** (`--mode regular`). Provinces set `HTTP_PROXY` /
-  `HTTPS_PROXY` env vars. No WireGuard, no `wg-client` container, no
-  `NET_ADMIN` capability on province containers.
-- **Sandcat CLI / settings layering** -- Janissary reads state from Divan,
-  not from JSON settings files.
-- **Placeholder-based secret substitution** -- Janissary uses direct HTTP
-  header injection (province never sees a placeholder or real value).
-- **Per-project / per-user settings** -- All state comes from Divan, written
-  by Sentinel and Vizier.
-
-### Relationship to Sandcat codebase
-
-Janissary is **not a fork and not a wrapper**. It is a standalone mitmproxy
-addon (single Python file + a FastAPI appeal API server) that follows the
-same architectural pattern as Sandcat's addon. The Sandcat repo is
-referenced for design guidance, not imported as a dependency.
+### Fork file structure
 
 ```
 janissary/
-├── janissary_addon.py    # mitmproxy addon (traffic rules, credential injection)
-├── janissary_api.py      # FastAPI appeal/access-request HTTP API
-├── janissary_state.py    # Divan poller + in-memory cache
-├── janissary_config.py   # Config loading
+├── janissary_addon.py    # mitmproxy addon (forked from SandcatAddon)
+│                         #   traffic rules, credential injection, audit logging
+├── janissary_api.py      # FastAPI appeal/access-request HTTP API (port 8081)
+├── janissary_state.py    # DivanPoller + JanissaryStateCache
+├── janissary_config.py   # Config loading (config.yaml)
 ├── janissary_main.py     # Process entry point (starts mitmproxy + API server)
-├── Dockerfile
-└── requirements.txt      # mitmproxy, fastapi, uvicorn, httpx
+├── wg-client/
+│   ├── Dockerfile        # WireGuard + iptables kill-switch container
+│   └── entrypoint.sh     # WireGuard interface setup + iptables rules
+├── Dockerfile            # mitmproxy + addon container
+├── janissary-entrypoint.sh
+├── config.yaml           # Default config template
+└── requirements.txt      # mitmproxy, fastapi, uvicorn, httpx, pyyaml
 ```
+
+### License
+
+Janissary retains Sandcat's Apache 2.0 license and includes attribution
+per the license terms. All modifications are clearly documented in the
+fork's commit history.
 
 ---
 
@@ -137,6 +134,41 @@ if command -v keytool &>/dev/null; then
 fi
 ```
 
+### Full MITM on all HTTPS
+
+All HTTPS traffic is MITM'd by default. mitmproxy terminates every TLS
+connection using the Sultanate CA, decrypts the request, applies traffic
+rules and credential injection, then opens a new TLS connection to the
+upstream server. This means all 4 traffic rules apply uniformly to both
+HTTP and HTTPS requests.
+
+### Cert-pinning escape hatch
+
+Some services (e.g., certain SDKs or clients that pin certificates) break
+under MITM. For these, domains can be added to a `passthrough_domains` list
+in `config.yaml`:
+
+```yaml
+passthrough_domains:
+  - "example-pinned-service.com"
+  - "another-pinned.io"
+```
+
+Passthrough domains skip MITM: mitmproxy tunnels the raw TLS connection
+without decryption. Traffic rules still apply at the CONNECT level
+(blacklist blocks the CONNECT; whitelist allows the tunnel; non-whitelisted
+read-only/write-block rules **cannot be enforced** since the HTTP method is
+inside the encrypted tunnel). This is an opt-in escape hatch for
+compatibility, not the default behavior.
+
+```python
+def tls_clienthello(self, flow: tls.ClientHelloData):
+    """Skip MITM for cert-pinning domains listed in passthrough_domains."""
+    host = flow.context.server.address[0] if flow.context.server else None
+    if host and self._normalize_domain(host) in self.passthrough_domains:
+        flow.ignore_connection = True
+```
+
 ### mitmproxy CA configuration
 
 mitmproxy is started with `--set confdir=/opt/mitmproxy` where the CA files
@@ -144,74 +176,135 @@ are pre-placed. mitmproxy expects:
 
 ```
 /opt/mitmproxy/
-├── mitmproxy-ca.pem           # symlink -> /certs/sultanate-ca.pem
-└── mitmproxy-ca.p12           # generated from the CA cert+key at container start
+├── mitmproxy-ca.pem           # combined key + cert
+└── mitmproxy-ca-cert.pem      # cert only
 ```
 
-The Janissary Dockerfile entrypoint converts the PEM cert+key into the
-formats mitmproxy expects:
+The Janissary entrypoint converts the PEM cert+key into the formats
+mitmproxy expects:
 
 ```bash
-# janissary-entrypoint.sh
+# janissary-entrypoint.sh (CA setup excerpt)
 CONFDIR="/opt/mitmproxy"
 mkdir -p "$CONFDIR"
-cp /certs/sultanate-ca.pem "$CONFDIR/mitmproxy-ca-cert.pem"
-cp /certs/sultanate-ca.key "$CONFDIR/mitmproxy-ca.pem"
 cat /certs/sultanate-ca.key /certs/sultanate-ca.pem > "$CONFDIR/mitmproxy-ca.pem"
-
-openssl pkcs12 -export -nokeys \
-  -in /certs/sultanate-ca.pem \
-  -out "$CONFDIR/mitmproxy-ca-cert.p12" \
-  -passout pass:""
+cp /certs/sultanate-ca.pem "$CONFDIR/mitmproxy-ca-cert.pem"
 ```
 
 ---
 
 ## 3. Proxy Configuration
 
-### Listen address and port
+### WireGuard transparent proxy architecture
 
-| Service | Port | Protocol | Purpose |
-|---------|------|----------|---------|
-| mitmproxy | `8080` | HTTP proxy (CONNECT for HTTPS) | Forward proxy for all province/Vizier traffic |
-| Appeal API | `8081` | HTTP | Appeal and access-request endpoints |
-
-mitmproxy listens on `0.0.0.0:8080` inside the Janissary container.
-The appeal API (FastAPI + Uvicorn) listens on `0.0.0.0:8081`.
-
-### Docker network setup
+Janissary uses Sandcat's WireGuard transparent proxy approach. Province
+containers do **not** set `HTTP_PROXY` / `HTTPS_PROXY` env vars. Instead,
+all traffic is transparently routed through mitmproxy via WireGuard tunnels
+and iptables NAT rules.
 
 ```
-sultanate-internal (bridge, internal: true)
-├── janissary       172.18.0.2
-├── vizier          172.18.0.3
-├── province-1      172.18.0.5   (dynamic, registered in Divan)
-├── province-2      172.18.0.6
-└── ...
+Province container
+  │  (shares network namespace with wg-client sidecar)
+  │
+  ├── all outbound traffic → wg0 interface
+  │
+  └── iptables NAT redirect:
+        port 80  → mitmproxy 8080
+        port 443 → mitmproxy 8080
+        other    → dropped (kill-switch)
 
-sultanate-external (bridge, internal: false)
-├── janissary       172.19.0.2   (dual-homed: internal + external)
+wg-client sidecar
+  │  WireGuard tunnel → Janissary mitmproxy container
+  │
+  └── iptables kill-switch:
+        -A OUTPUT -o wg0 -j ACCEPT
+        -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+        -A OUTPUT -j DROP
 ```
 
-Janissary is the **only container on both networks**. Provinces and Vizier
-are on `sultanate-internal` only (`internal: true` -- no default route to the
-internet). Janissary's second interface on `sultanate-external` provides
-the actual internet egress path.
+### Listen addresses and ports
 
-### Province proxy configuration
+| Service | Address | Port | Protocol | Purpose |
+|---------|---------|------|----------|---------|
+| mitmproxy | `0.0.0.0` | `8080` | HTTP (transparent mode) | Intercepts all province/Vizier HTTP and HTTPS traffic |
+| Appeal API | `0.0.0.0` | `8081` | HTTP | Appeal and access-request endpoints |
+| Divan | `127.0.0.1` | `8600` | HTTP | Shared state store (Janissary polls this) |
 
-Vizier sets these environment variables on every province container:
+mitmproxy runs in **transparent mode** (`--mode transparent`), not regular
+forward proxy mode. Traffic arrives via iptables NAT redirect, not via
+explicit proxy configuration.
+
+### WireGuard wg-client setup
+
+Each province gets a `wg-client` sidecar container. The province container
+shares the sidecar's network namespace (`network_mode: "service:wg-client-{id}"`),
+so all province traffic flows through the sidecar's network stack.
+
+The wg-client sidecar:
+1. Establishes a WireGuard tunnel to the Janissary container
+2. Configures iptables to redirect ports 80 and 443 to the mitmproxy endpoint
+3. Installs a kill-switch: if the WireGuard tunnel goes down, all traffic
+   is dropped (fail-closed)
 
 ```bash
-HTTP_PROXY=http://172.18.0.2:8080
-HTTPS_PROXY=http://172.18.0.2:8080
-NO_PROXY=172.18.0.2
+#!/bin/bash
+# wg-client/entrypoint.sh
+set -euo pipefail
+
+# Configure WireGuard interface
+wg-quick up /etc/wireguard/wg0.conf
+
+# NAT redirect: route HTTP/HTTPS to mitmproxy
+iptables -t nat -A OUTPUT -p tcp --dport 80  -j DNAT --to-destination ${MITMPROXY_HOST}:8080
+iptables -t nat -A OUTPUT -p tcp --dport 443 -j DNAT --to-destination ${MITMPROXY_HOST}:8080
+
+# Kill-switch: only allow traffic through WireGuard tunnel
+iptables -A OUTPUT -o wg0 -j ACCEPT
+iptables -A OUTPUT -d 127.0.0.0/8 -j ACCEPT
+iptables -A OUTPUT -j DROP
+
+# Keep container running
+exec sleep infinity
 ```
 
-`NO_PROXY=172.18.0.2` ensures that requests to Janissary's appeal API
-(`http://172.18.0.2:8081/api/...`) go directly, not through the proxy.
+### Network topology
 
-Vizier's own environment has the same variables.
+```
+Docker host
+├── Janissary container (network_mode: host)
+│   ├── mitmproxy on 0.0.0.0:8080 (transparent proxy)
+│   ├── Appeal API on 0.0.0.0:8081
+│   ├── WireGuard server interface (wg0)
+│   └── Internet egress via host network
+│
+├── Divan container (network_mode: host)
+│   └── 127.0.0.1:8600
+│
+├── wg-client-prov-a1b2c3 (cap_add: NET_ADMIN)
+│   ├── WireGuard client tunnel → Janissary wg0
+│   ├── iptables NAT redirect (80,443 → mitmproxy)
+│   ├── iptables kill-switch
+│   └── Shared network namespace with province container
+│
+├── province-prov-a1b2c3 (network_mode: "service:wg-client-prov-a1b2c3")
+│   ├── All traffic goes through wg-client's network stack
+│   ├── CA cert mounted at /usr/local/share/ca-certificates/sultanate-ca.crt
+│   └── No HTTP_PROXY/HTTPS_PROXY env vars needed
+│
+└── (more wg-client + province pairs as needed)
+```
+
+Janissary runs with `network_mode: host` to get both internet egress and
+localhost access to Divan on port 8600. Province containers have no direct
+internet route -- their only path to the internet is through the WireGuard
+tunnel to Janissary's mitmproxy.
+
+### Province source IP identification
+
+Each WireGuard peer (wg-client sidecar) has a unique IP address within the
+WireGuard subnet. Janissary identifies the source province by the WireGuard
+peer IP of the incoming connection. This IP is registered in Divan when
+Vizier creates the province.
 
 ### Janissary configuration file
 
@@ -222,6 +315,7 @@ Vizier's own environment has the same variables.
 proxy:
   listen_host: "0.0.0.0"
   listen_port: 8080
+  mode: "transparent"
 
 api:
   listen_host: "0.0.0.0"
@@ -239,8 +333,19 @@ ca:
   key_path: "/certs/sultanate-ca.key"
   confdir: "/opt/mitmproxy"
 
+wireguard:
+  interface: "wg0"
+  listen_port: 51820
+  subnet: "10.13.13.0/24"               # WireGuard peer subnet
+  server_address: "10.13.13.1/24"
+
+appeal:
+  one_time_timeout_minutes: 5            # configurable, default 5
+
+passthrough_domains: []                  # cert-pinning escape hatch
+
 logging:
-  level: "INFO"                           # DEBUG, INFO, WARNING, ERROR
+  level: "INFO"                          # DEBUG, INFO, WARNING, ERROR
   audit_file: "/var/log/janissary/audit.jsonl"
 ```
 
@@ -248,7 +353,7 @@ logging:
 
 ```bash
 mitmdump \
-  --mode regular \
+  --mode transparent \
   --listen-host 0.0.0.0 \
   --listen-port 8080 \
   --set confdir=/opt/mitmproxy \
@@ -267,7 +372,10 @@ connections for blocked requests).
 
 ### Rule evaluation order
 
-Evaluated per-request in the `request()` mitmproxy hook:
+Evaluated per-request in the `request()` mitmproxy hook. All 4 rules apply
+uniformly to HTTP and HTTPS. mitmproxy decrypts all TLS connections using
+the Sultanate CA, so every request arrives at the `request()` hook with full
+method, host, path, and headers visible.
 
 ```python
 def _evaluate_traffic_rules(self, source_ip: str, method: str, host: str) -> str:
@@ -298,6 +406,38 @@ def _evaluate_traffic_rules(self, source_ip: str, method: str, host: str) -> str
     return "block_write"
 ```
 
+### HTTPS handling
+
+All HTTPS traffic is MITM'd by default. When a client opens a TLS
+connection (CONNECT), mitmproxy:
+
+1. Terminates TLS with the Sultanate CA cert
+2. Decrypts the request
+3. The `request()` hook fires with full request details
+4. Traffic rules and credential injection are applied
+5. mitmproxy opens a new TLS connection to the upstream server
+6. Response flows back to the client
+
+Blacklisted domains are also checked at the CONNECT level for
+early rejection:
+
+```python
+def http_connect(self, flow: http.HTTPFlow):
+    """Early blacklist rejection at CONNECT time."""
+    host = self._normalize_domain(flow.request.pretty_host)
+
+    # Blacklisted -> block immediately (respond 403 to CONNECT)
+    if self.state.has_loaded and host in self.state.blacklist:
+        flow.response = http.Response.make(
+            403,
+            json.dumps({
+                "error": "blacklisted",
+                "message": f"Domain {host} is on the global blacklist.",
+            }),
+            {"Content-Type": "application/json"},
+        )
+```
+
 ### Domain matching semantics
 
 **Exact string equality on the domain label.** No glob patterns, no
@@ -306,11 +446,11 @@ wildcard subdomain matching, no regex.
 ```
 Whitelist contains: "github.com"
 
-github.com       → match ✓
-api.github.com   → no match ✗  (must be listed separately)
-www.github.com   → no match ✗
-GITHUB.COM       → match ✓     (case-insensitive comparison)
-github.com.      → match ✓     (trailing dot stripped before comparison)
+github.com       -> match
+api.github.com   -> no match  (must be listed separately)
+www.github.com   -> no match
+GITHUB.COM       -> match     (case-insensitive comparison)
+github.com.      -> match     (trailing dot stripped before comparison)
 ```
 
 Implementation:
@@ -323,70 +463,6 @@ def _normalize_domain(self, domain: str) -> str:
 All domain comparisons use normalized forms. Divan stores domains in
 lowercase without trailing dots.
 
-### HTTP vs HTTPS request handling
-
-#### HTTP requests (no TLS)
-
-The `request()` hook fires with full request details (method, host, path,
-headers, body). All 4 rules are evaluated. Credential injection applies.
-
-#### HTTPS requests (TLS via CONNECT)
-
-HTTPS flows through two hooks:
-
-1. **`http_connect()`** -- fires when the client sends `CONNECT host:443`.
-   Janissary decides here whether to MITM or pass-through:
-
-```python
-def http_connect(self, flow: http.HTTPFlow):
-    host = self._normalize_domain(flow.request.pretty_host)
-    source_ip = flow.client_conn.peername[0]
-
-    # Blacklisted -> block immediately (respond 403 to CONNECT)
-    if host in self.state.blacklist:
-        flow.response = http.Response.make(403, ...)
-        return
-
-    # Grant exists for this source+domain -> MITM (need to inject headers)
-    if self.state.has_grant(source_ip, host):
-        # Do nothing: mitmproxy will MITM by default
-        return
-
-    # No grant -> pass-through (TLS tunnel, no inspection)
-    # Whitelisted domains: safe to pass through (all methods allowed)
-    # Non-whitelisted domains: pass through (can't inspect method)
-    flow.metadata["passthrough"] = True
-```
-
-2. **`request()`** -- fires only for MITM'd connections. Full rule evaluation
-   and credential injection apply.
-
-For pass-through HTTPS (no MITM):
-- Blacklisted domains: blocked at `http_connect()`
-- Whitelisted domains: passed through (all methods allowed per rule 2)
-- Non-whitelisted domains without grants: passed through -- **method-based
-  rules (3, 4) cannot be enforced** since the HTTP method is inside the
-  encrypted tunnel
-
-> **Security note:** Write-block (rule 4) is not enforced for HTTPS to
-> non-whitelisted domains without grants. This is a deliberate trade-off:
-> MITM'ing all HTTPS adds CA trust complexity and performance overhead.
-> Agents writing to non-whitelisted HTTPS endpoints without injected
-> credentials have limited ability to authenticate, reducing exfiltration
-> risk. Audit logs record all CONNECT requests for review.
-
-### mitmproxy passthrough implementation
-
-To pass-through (not MITM) a specific connection, use mitmproxy's
-`ignore_hosts` or set the flow to non-intercepted:
-
-```python
-def tls_clienthello(self, flow: tls.ClientHelloData):
-    """Skip MITM for connections marked as passthrough."""
-    if flow.context.metadata.get("passthrough"):
-        flow.ignore_connection = True
-```
-
 ### Audit logging
 
 Every request decision is logged to the audit file as JSONL:
@@ -394,7 +470,7 @@ Every request decision is logged to the audit file as JSONL:
 ```json
 {
   "ts": "2026-04-12T11:00:00.123Z",
-  "source_ip": "172.18.0.5",
+  "source_ip": "10.13.13.2",
   "province_id": "prov-a1b2c3",
   "method": "POST",
   "host": "api.github.com",
@@ -405,6 +481,18 @@ Every request decision is logged to the audit file as JSONL:
   "credential_injected": true
 }
 ```
+
+Fields:
+- `ts` -- ISO 8601 timestamp with milliseconds
+- `source_ip` -- WireGuard peer IP of the requesting province
+- `province_id` -- resolved from source IP via Divan state (null if unknown)
+- `method` -- HTTP method
+- `host` -- normalized domain
+- `path` -- request path
+- `decision` -- `allow` or `block`
+- `rule` -- which rule determined the decision (`blacklist`, `whitelist`, `readonly`, `write_block`, `appeal`, `no_state`)
+- `mitm` -- whether the connection was MITM'd (always true except passthrough domains)
+- `credential_injected` -- whether a grant header was injected
 
 ---
 
@@ -492,7 +580,7 @@ class JanissaryStateCache:
                 value=g["inject"]["value"],
             )
 
-        # Approved appeals (one-time, within 5-min window)
+        # Approved appeals (one-time, within configurable timeout window)
         cache.approved_appeals = {}
         for a in data["approved_appeals"]:
             url_host = _extract_host_from_url(a["url"])
@@ -520,7 +608,7 @@ def get_grant(self, source_ip: str, domain: str) -> Grant | None:
 
 def has_approved_appeal(self, source_ip: str, method: str, host: str) -> bool:
     """Check if there's a one-time approved appeal matching this request.
-    Divan's bulk state endpoint already filters to 5-minute window."""
+    Divan's bulk state endpoint already filters by the configured timeout window."""
     for (a_ip, a_url, a_method), _ in self.approved_appeals.items():
         if a_ip == source_ip and a_method == method.upper():
             a_host = _extract_host_from_url(a_url)
@@ -536,7 +624,7 @@ def get_province_id(self, source_ip: str) -> str | None:
 
 | Scenario | Behavior |
 |----------|----------|
-| Fresh start, never polled Divan | **Block all traffic.** `has_loaded = False` → every request returns 403 with "Janissary initializing, waiting for state" |
+| Fresh start, never polled Divan | **Block all traffic.** `has_loaded = False` -- every request returns 403 with "Janissary initializing, waiting for state" |
 | Divan unreachable after successful poll | **Use cached state.** Last-known rules remain in effect. Log warnings. |
 | Divan returns error (500, etc.) | Same as unreachable -- keep cached state, log warning |
 | Province IP not in cache | Traffic from unknown IPs is blocked. Only registered, running provinces are served. |
@@ -554,9 +642,9 @@ Default: **5 seconds** (configurable via `config.yaml`). This means:
 
 ### How it works
 
-When mitmproxy MITM's an HTTPS connection (because a grant exists for
-source_ip + domain), the `request()` hook has full access to the decrypted
-HTTP request. Janissary injects the credential header before forwarding:
+All HTTPS is MITM'd by default, so every request arrives at the `request()`
+hook fully decrypted. Credential injection is straightforward: check if a
+grant exists for the source IP and domain, and if so, inject the header.
 
 ```python
 def _inject_credentials(self, flow: http.HTTPFlow, source_ip: str):
@@ -569,40 +657,27 @@ def _inject_credentials(self, flow: http.HTTPFlow, source_ip: str):
     flow.request.headers[grant.header] = grant.value
 ```
 
-### MITM decision flow for HTTPS
+### Request flow
 
 ```
-Client CONNECT api.github.com:443
-  │
-  ├── Blacklisted? → 403 (blocked)
-  │
-  ├── Grant exists for (source_ip, api.github.com)?
-  │     YES → MITM the connection
-  │           → mitmproxy terminates TLS with Sultanate CA cert
-  │           → Client re-establishes TLS with mitmproxy (trusts CA)
-  │           → mitmproxy opens new TLS connection to api.github.com
-  │           → request() hook fires:
-  │               → Evaluate traffic rules (blacklist/whitelist/read-only/write-block)
-  │               → If allowed: inject Authorization header from grant
-  │               → Forward to upstream
-  │               → Return response to client
-  │
-  └── No grant → Pass-through
-        → mitmproxy tunnels raw TCP/TLS (no inspection)
-        → Blacklist checked at CONNECT level
-        → Whitelisted domains: pass through
-        → Non-whitelisted domains: pass through (method unknown)
+Request arrives (already decrypted by mitmproxy MITM)
+  -> Look up grant for (source_ip, domain)
+  -> If grant exists: set/replace the specified header
+  -> Forward to upstream
 ```
+
+No separate "MITM decision" is needed -- all connections are MITM'd, so
+credential injection applies uniformly.
 
 ### Grant matching
 
 Grant lookup uses exact match on `(source_ip, normalized_domain)`:
 
 ```
-Grant: source_ip=172.18.0.5, domain=api.github.com
-Request from 172.18.0.5 to api.github.com  → injected ✓
-Request from 172.18.0.5 to github.com      → NOT injected (different domain)
-Request from 172.18.0.6 to api.github.com  → NOT injected (different source)
+Grant: source_ip=10.13.13.2, domain=api.github.com
+Request from 10.13.13.2 to api.github.com  -> injected
+Request from 10.13.13.2 to github.com      -> NOT injected (different domain)
+Request from 10.13.13.3 to api.github.com  -> NOT injected (different source)
 ```
 
 ### What the province sees
@@ -665,7 +740,7 @@ Janissary identifies the caller by source IP (from the TCP connection).
 {
   "status": "pending",
   "appeal_id": "appeal-m1n2o3",
-  "message": "Appeal submitted. Waiting for Sultan's decision. Retry your request within 5 minutes of approval."
+  "message": "Appeal submitted. Waiting for Sultan's decision. Retry your request after approval."
 }
 ```
 
@@ -702,9 +777,13 @@ Request new credentials or permanent whitelist addition.
 
 ### Province access to appeal API
 
-Province containers have `NO_PROXY=172.18.0.2` (Janissary's IP), so
-requests to `http://172.18.0.2:8081/api/appeal` bypass the proxy and go
-directly to the appeal API server.
+Since provinces share the wg-client sidecar's network namespace, the
+appeal API is accessible via the Janissary host at port 8081. The firman
+configures the appeal API address as an environment variable:
+
+```bash
+JANISSARY_API="http://${JANISSARY_HOST}:8081"
+```
 
 The MCP tool in provinces (provided by the firman) calls the API:
 
@@ -712,7 +791,7 @@ The MCP tool in provinces (provided by the firman) calls the API:
 # In province MCP tool implementation
 import httpx
 
-JANISSARY_API = "http://172.18.0.2:8081"
+JANISSARY_API = os.environ["JANISSARY_API"]
 
 def appeal_request(url: str, method: str, justification: str) -> dict:
     resp = httpx.post(f"{JANISSARY_API}/api/appeal", json={
@@ -734,7 +813,7 @@ def request_access(service: str, scope: str, justification: str) -> dict:
 ### One-time approval retry flow
 
 ```
-1. Agent POSTs to api.example.com → blocked (rule 4) → gets 403
+1. Agent POSTs to api.example.com -> blocked (rule 4) -> gets 403
 2. Agent calls appeal_request("https://api.example.com/data", "POST", "...")
 3. Janissary writes appeal to Divan (status: pending)
 4. Vizier polls Divan, relays to Sultan via Telegram
@@ -743,17 +822,26 @@ def request_access(service: str, scope: str, justification: str) -> dict:
 7. Janissary's next poll picks up the approval in approved_appeals
 8. Agent retries POST to api.example.com
 9. Janissary checks _evaluate_traffic_rules():
-   - Not blacklisted ✓
-   - Not whitelisted → check read-only → POST is not GET/HEAD → check appeals
-   - has_approved_appeal(source_ip, "POST", "api.example.com") → True
+   - Not blacklisted
+   - Not whitelisted -> check read-only -> POST is not GET/HEAD -> check appeals
+   - has_approved_appeal(source_ip, "POST", "api.example.com") -> True
    - Result: allow
 10. Request goes through (one time only)
 ```
 
-The **5-minute window** is enforced server-side by Divan: the
-`/janissary/state` endpoint only includes `approved_appeals` with
-`resolved_at` within the last 5 minutes. After 5 minutes, the approval
-expires and the agent must appeal again.
+### One-time approval timeout
+
+The one-time approval timeout is **configurable** via `config.yaml`:
+
+```yaml
+appeal:
+  one_time_timeout_minutes: 5    # default: 5 minutes
+```
+
+Divan's bulk state endpoint (`GET /janissary/state`) filters
+`approved_appeals` to only include `one-time` approvals with `resolved_at`
+within this configured window. After the timeout expires, the approval is
+no longer returned and the agent must appeal again.
 
 ---
 
@@ -774,12 +862,12 @@ Content-Type: application/json
     "method": "POST",
     "host": "api.example.com",
     "path": "/data",
-    "source_ip": "172.18.0.5",
+    "source_ip": "10.13.13.2",
     "province_id": "prov-a1b2c3",
     "rule": "write_block"
   },
   "appeal": {
-    "url": "http://172.18.0.2:8081/api/appeal",
+    "url": "http://${JANISSARY_HOST}:8081/api/appeal",
     "method": "POST",
     "content_type": "application/json",
     "body_template": {
@@ -787,7 +875,7 @@ Content-Type: application/json
       "method": "POST",
       "justification": "<explain why you need this>"
     },
-    "instructions": "Submit an appeal by POSTing to the appeal URL above. Include a justification explaining why this write is needed. After approval, retry your original request within 5 minutes."
+    "instructions": "Submit an appeal by POSTing to the appeal URL above. Include a justification explaining why this write is needed. After approval, retry your original request."
   }
 }
 ```
@@ -803,7 +891,7 @@ Content-Type: application/json
   "message": "Domain pastebin.com is on the global blacklist. All traffic blocked.",
   "details": {
     "host": "pastebin.com",
-    "source_ip": "172.18.0.5",
+    "source_ip": "10.13.13.2",
     "rule": "blacklist"
   }
 }
@@ -827,7 +915,7 @@ Content-Type: application/json
 
 ## 9. Docker Deployment
 
-### docker-compose.yml snippet
+### docker-compose.yml
 
 ```yaml
 services:
@@ -851,19 +939,16 @@ services:
     depends_on:
       divan:
         condition: service_healthy
+    network_mode: host          # internet egress + localhost Divan access
     volumes:
-      - /opt/sultanate/certs/sultanate-ca.pem:/certs/sultanate-ca.pem:ro
-      - /opt/sultanate/certs/sultanate-ca.key:/certs/sultanate-ca.key:ro
+      - /opt/sultanate/certs:/certs:ro
       - /opt/sultanate/janissary/config.yaml:/opt/janissary/config.yaml:ro
       - /opt/sultanate/divan.env:/opt/sultanate/divan.env:ro
       - janissary-logs:/var/log/janissary
     env_file:
       - /opt/sultanate/divan.env      # provides DIVAN_KEY_JANISSARY
-    networks:
-      sultanate-internal:
-        ipv4_address: 172.18.0.2
-      sultanate-external: {}
-    ports: []                          # no host-exposed ports
+    cap_add:
+      - NET_ADMIN                     # WireGuard server interface
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python3", "-c",
@@ -872,27 +957,98 @@ services:
       timeout: 3s
       retries: 10
 
-networks:
-  sultanate-internal:
-    driver: bridge
-    internal: true                     # no external route
-    ipam:
-      config:
-        - subnet: 172.18.0.0/16
-          gateway: 172.18.0.1
-
-  sultanate-external:
-    driver: bridge
-    internal: false                    # has external route
-
 volumes:
   janissary-logs:
 ```
+
+### WireGuard province networking
+
+Province containers are created dynamically by Vizier. Each province gets a
+`wg-client` sidecar container, and the province container shares the
+sidecar's network namespace.
+
+Vizier creates the wg-client sidecar and province as a pair:
+
+```yaml
+# Created dynamically by Vizier for each province
+# (conceptual docker-compose fragment, actual creation via Docker API)
+
+services:
+  wg-client-prov-a1b2c3:
+    build: ./janissary/wg-client
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - /opt/sultanate/provinces/prov-a1b2c3/wg0.conf:/etc/wireguard/wg0.conf:ro
+    environment:
+      - MITMPROXY_HOST=10.13.13.1    # Janissary's WireGuard address
+    restart: unless-stopped
+
+  province-prov-a1b2c3:
+    image: nousresearch/hermes-agent
+    network_mode: "service:wg-client-prov-a1b2c3"
+    volumes:
+      - /opt/sultanate/provinces/prov-a1b2c3/data:/opt/data
+      - /opt/sultanate/certs/sultanate-ca.pem:/usr/local/share/ca-certificates/sultanate-ca.crt:ro
+    environment:
+      - JANISSARY_API=http://10.13.13.1:8081
+      # No HTTP_PROXY / HTTPS_PROXY -- traffic is transparently intercepted
+    depends_on:
+      - wg-client-prov-a1b2c3
+```
+
+### WireGuard configuration
+
+Each province gets a unique WireGuard peer configuration. Vizier generates
+these at province creation time.
+
+**Janissary server config** (`/opt/sultanate/janissary/wg0.conf`):
+
+```ini
+[Interface]
+Address = 10.13.13.1/24
+ListenPort = 51820
+PrivateKey = <janissary-private-key>
+
+# Peers added dynamically by Vizier
+[Peer]
+# prov-a1b2c3
+PublicKey = <province-public-key>
+AllowedIPs = 10.13.13.2/32
+
+[Peer]
+# prov-d4e5f6
+PublicKey = <province-public-key>
+AllowedIPs = 10.13.13.3/32
+```
+
+**Province wg-client config** (`/opt/sultanate/provinces/prov-a1b2c3/wg0.conf`):
+
+```ini
+[Interface]
+Address = 10.13.13.2/32
+PrivateKey = <province-private-key>
+
+[Peer]
+PublicKey = <janissary-public-key>
+Endpoint = <host-ip>:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+```
+
+`AllowedIPs = 0.0.0.0/0` routes all traffic through the WireGuard tunnel
+to Janissary.
 
 ### Janissary Dockerfile
 
 ```dockerfile
 FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wireguard-tools \
+    iptables \
+    curl \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
     mitmproxy==11.* \
@@ -905,10 +1061,24 @@ COPY . /opt/janissary/
 WORKDIR /opt/janissary
 
 RUN mkdir -p /opt/mitmproxy /var/log/janissary
+RUN chmod +x /opt/janissary/janissary-entrypoint.sh
 
-EXPOSE 8080 8081
+EXPOSE 8080 8081 51820/udp
 
 ENTRYPOINT ["/opt/janissary/janissary-entrypoint.sh"]
+```
+
+### wg-client Dockerfile
+
+```dockerfile
+FROM alpine:3.20
+
+RUN apk add --no-cache wireguard-tools iptables bash
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
 ```
 
 ### janissary-entrypoint.sh
@@ -923,6 +1093,13 @@ mkdir -p "$CONFDIR"
 cat /certs/sultanate-ca.key /certs/sultanate-ca.pem > "$CONFDIR/mitmproxy-ca.pem"
 cp /certs/sultanate-ca.pem "$CONFDIR/mitmproxy-ca-cert.pem"
 
+# Set up WireGuard server interface
+wg-quick up /opt/janissary/wg0.conf || {
+  echo "FATAL: WireGuard setup failed. Exiting."
+  exit 1
+}
+echo "WireGuard interface up."
+
 # Wait for Divan to be healthy
 echo "Waiting for Divan..."
 until curl -sf http://127.0.0.1:8600/health > /dev/null 2>&1; do
@@ -934,9 +1111,9 @@ echo "Divan is ready."
 python3 /opt/janissary/janissary_api.py &
 API_PID=$!
 
-# Start mitmproxy (foreground)
+# Start mitmproxy (foreground, transparent mode)
 exec mitmdump \
-  --mode regular \
+  --mode transparent \
   --listen-host 0.0.0.0 \
   --listen-port 8080 \
   --set confdir="$CONFDIR" \
@@ -953,30 +1130,47 @@ exec mitmdump \
 ```
 1. Divan starts (network_mode: host, port 8600)
 
-   └── healthcheck: GET /health → 200
+   +-- healthcheck: GET /health -> 200
 
 2. Janissary starts (depends_on: divan healthy)
-   ├── janissary-entrypoint.sh:
-   │   ├── Prepare mitmproxy CA confdir
-   │   ├── Poll Divan /health until 200 (curl loop, 1s interval, 60s timeout)
-   │   ├── Start appeal API (uvicorn, port 8081, background)
-   │   └── Start mitmdump (port 8080, foreground)
-   │
-   ├── JanissaryAddon.running():
-   │   └── Start DivanPoller background thread
-   │       └── First poll: GET /janissary/state
-   │           ├── Success → has_loaded = True, traffic flows
-   │           └── Failure → has_loaded = False, all traffic blocked (fail-closed)
-   │
-   └── healthcheck: GET /health on appeal API → 200
+   +-- janissary-entrypoint.sh:
+   |   +-- Prepare mitmproxy CA confdir
+   |   +-- Start WireGuard server interface (wg-quick up)
+   |   |   +-- Success -> continue
+   |   |   +-- Failure -> exit 1 (container fails, Docker restarts)
+   |   +-- Poll Divan /health until 200 (curl loop, 1s interval, 60s timeout)
+   |   +-- Start appeal API (uvicorn, port 8081, background)
+   |   +-- Start mitmdump (port 8080, foreground, transparent mode)
+   |
+   +-- JanissaryAddon.running():
+   |   +-- Start DivanPoller background thread
+   |       +-- First poll: GET /janissary/state
+   |           +-- Success -> has_loaded = True, traffic flows
+   |           +-- Failure -> has_loaded = False, all traffic blocked (fail-closed)
+   |
+   +-- healthcheck: GET /health on appeal API -> 200
        (only returns 200 after has_loaded = True)
 
 3. Sentinel starts (host networking, not through Janissary)
 
 4. Vizier starts (depends_on: janissary healthy, through Janissary)
+   +-- Vizier's wg-client sidecar connects to Janissary's WireGuard
 
-5. Provinces start on demand (through Janissary)
+5. Provinces start on demand (Vizier creates wg-client + province pairs)
+   +-- wg-client: WireGuard tunnel + iptables kill-switch
+   +-- Province: shares wg-client network, CA cert installed
 ```
+
+### WireGuard health in the startup chain
+
+The WireGuard server interface must be established before mitmproxy accepts
+traffic. The entrypoint enforces this ordering: `wg-quick up` runs before
+`mitmdump` starts. If WireGuard setup fails, the entrypoint exits with a
+non-zero code and Docker restarts the container.
+
+For province wg-client sidecars, the WireGuard tunnel must be up before the
+province container starts. The `depends_on` relationship in the dynamic
+container creation ensures this ordering.
 
 ### Health endpoint
 
@@ -1018,7 +1212,8 @@ On `SIGTERM` (Docker stop):
 2. In-flight requests complete (mitmproxy default: 5s drain)
 3. DivanPoller thread stops (`_running = False`)
 4. Appeal API server shuts down (uvicorn handles SIGTERM)
-5. Process exits
+5. WireGuard interface torn down (`wg-quick down`)
+6. Process exits
 
 No state persistence needed -- all state is in Divan. On restart,
 Janissary re-polls and rebuilds the cache.
@@ -1027,8 +1222,10 @@ Janissary re-polls and rebuilds the cache.
 
 | Failure | Impact | Recovery |
 |---------|--------|----------|
+| WireGuard setup fails at start | Janissary container exits, no traffic flows | Docker `restart: unless-stopped` retries. Fix WireGuard config. |
 | Divan down at Janissary start | Janissary blocks all traffic (fail-closed) | Auto-recovers when Divan comes up (poller retries every 5s) |
 | Divan goes down after start | Janissary uses cached state | Auto-recovers on next successful poll |
-| Janissary crashes | All province/Vizier traffic fails (no proxy) | Docker `restart: unless-stopped` restarts it. Sultan has SSH fallback. |
+| Janissary crashes | All province/Vizier traffic fails (WireGuard tunnel drops, kill-switch blocks all) | Docker `restart: unless-stopped` restarts it. Sultan has SSH fallback. |
+| wg-client sidecar crashes | That province's traffic is killed (iptables kill-switch) | Docker restarts sidecar. Province traffic resumes when tunnel re-establishes. |
 | Appeal API crashes | Appeals fail, proxy still works | Restart container. Traffic rules unaffected. |
-| mitmproxy crashes | All traffic blocked (proxy gone) | Docker restart. Fail-closed by design. |
+| mitmproxy crashes | All traffic blocked (proxy gone, kill-switch active) | Docker restart. Fail-closed by design. |

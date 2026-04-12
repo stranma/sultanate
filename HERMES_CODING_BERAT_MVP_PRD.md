@@ -84,7 +84,7 @@ Sultan can enable additional tools per province.
 
 ### Janissary Security MCP
 
-Two tools provided by Janissary's MCP server:
+Two tools provided by Janissary's HTTP API (exposed as MCP tools in provinces):
 
 **`appeal_request`** -- appeal a blocked outbound request:
 ```
@@ -125,10 +125,9 @@ tools:
 
 mcp_servers:
   janissary_security:
-    command: "npx"
-    args: ["-y", "@sultanate/janissary-mcp"]
-    env:
-      JANISSARY_URL: "http://<janissary-host>:8080"
+    url: "http://<janissary-host>:8081/mcp"
+    transport: "http"
+    description: "Sultanate security tools: appeal blocked requests, request new access"
 ```
 
 Sultan can override model and tool list per province at creation time.
@@ -188,7 +187,7 @@ Divan, Sentinel asks Sultan, then opens on approval.
 - SOUL.md template for coding Pasha
 - AGENTS.md template with variable substitution
 - Curated tool selection (9 of 40+ Hermes tools)
-- Janissary security MCP server configuration
+- Janissary security HTTP API configuration (MCP transport wrapper)
 - Default whitelist (GitHub, PyPI, npm, docs)
 - Default GitHub grant (read/write, scoped token)
 - Non-HTTP port declarations (Sultan approval required)

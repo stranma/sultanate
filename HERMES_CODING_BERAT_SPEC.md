@@ -427,10 +427,11 @@ Sentinel reads pending port requests, relays to Sultan for approval. On
 approval, Sentinel opens the host:port pair via iptables/Docker network
 rules. No auto-approve.
 
-## 7. Janissary MCP Server Configuration
+## 7. Janissary HTTP API Configuration
 
-The Janissary MCP server is an HTTP API served by Janissary, not an npm
-package. Provinces connect to it over the internal Docker network.
+Janissary exposes an HTTP API for appeals and access requests. Provinces
+connect to it over the internal Docker network. MCP tools wrap these HTTP
+endpoints for agent convenience.
 
 ### config.yaml mcp_servers Section
 
@@ -460,7 +461,7 @@ implementation uses HTTP transport because:
 
 ### MCP Tools Provided
 
-Two tools are available via the MCP server (see
+Two tools are available via the HTTP API (see
 [JANISSARY_MVP_PRD.md](JANISSARY_MVP_PRD.md)):
 
 **`appeal_request`** -- appeal a blocked outbound request:
@@ -481,8 +482,8 @@ Routed to Sultan via Vizier. Sultan tells Sentinel to provision.
 
 Vizier sets `{{janissary_url}}` during template rendering. The value is
 Janissary's address on the internal Docker network (e.g.,
-`http://172.18.0.2:8081`). This is NOT the proxy port (8080) -- it's the
-`HTTPS_PROXY` env vars, but the MCP endpoint is a distinct path (`/mcp`).
+`http://172.18.0.2:8081`). This is the appeal API endpoint; the `/mcp`
+path on this port serves the MCP tools.
 
 ## 8. Cross-Reference: Firman ↔ Berat Boundary
 
@@ -494,7 +495,7 @@ Janissary's address on the internal Docker network (e.g.,
 | SOUL.md | Does not provide it | Provides template |
 | AGENTS.md | Does not provide it | Provides template |
 | config.yaml | Does not provide it | Provides template |
-| Proxy env vars | Not declared (Vizier sets) | Not declared (Vizier sets) |
+| WireGuard routing | Not declared (transparent) | Not declared (transparent) |
 | CA cert | Not declared (Vizier handles) | Not declared (Vizier handles) |
 | Whitelist | Not declared | Declares defaults |
 | Grants | Not declared | Declares templates (no secrets) |

@@ -361,7 +361,11 @@ automatically added to the source's whitelist in Divan.
 
 When `decision` is `one-time`, the appeal is marked approved. The agent
 retries the request. Janissary checks Divan for approved appeals matching
-the URL + method + source_ip within a 5-minute window and lets it through.
+the URL + method + source_ip within a configurable (default: 5 minutes)
+window and lets it through. The one-time approval window defaults to
+5 minutes and can be configured via Janissary's `config.yaml`
+(`appeal.one_time_timeout_minutes`). Divan filters approved appeals by
+this window when serving the `/janissary/state` endpoint.
 
 Returns `200` with updated appeal object.
 
@@ -469,7 +473,8 @@ Returns `200` with:
 ```
 
 `approved_appeals` only includes `one-time` approvals from the last
-5 minutes (the retry window). Janissary-role only.
+configurable window (default: 5 minutes, set via Janissary's
+`appeal.one_time_timeout_minutes`). Janissary-role only.
 
 ---
 

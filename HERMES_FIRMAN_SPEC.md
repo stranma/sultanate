@@ -77,33 +77,41 @@ Each step maps to a specific field in the manifest.
 1. READ firman.yaml
    -> parse YAML, validate required fields
 
-2. DOCKER CREATE
+2. CREATE WG-CLIENT SIDECAR
+   -> docker create \
+        --name wg-client-prov-<id> \
+        --cap-add NET_ADMIN \
+        -v /opt/sultanate/provinces/<id>/wg0.conf:/etc/wireguard/wg0.conf:ro \
+        -e MITMPROXY_HOST=10.13.13.1 \
+        sultanate/wg-client:latest
+
+3. DOCKER CREATE (province, shares sidecar network)
    -> docker create \
         --name sultanate-prov-<id> \
-        --network sultanate-internal \
+        --network-mode container:wg-client-prov-<id> \
         --env HERMES_HOME=/opt/data \
-        --env HTTP_PROXY=http://<janissary-ip>:8080 \
-        --env HTTPS_PROXY=http://<janissary-ip>:8080 \
         --env NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/sultanate-ca.crt \
-        --volume prov-<id>-data:/opt/data \
+        --env JANISSARY_API=http://10.13.13.1:8081 \
+        --volume /opt/sultanate/provinces/<id>/data:/opt/data \
         nousresearch/hermes-agent:v2026.3.30
    Uses: image, hermes_home
 
-3. INSTALL CA CERT (see §4)
+4. INSTALL CA CERT (see §4)
 
-4. DOCKER START
+5. DOCKER START
+   -> docker start wg-client-prov-<id>  (sidecar first)
    -> docker start sultanate-prov-<id>
    -> entrypoint.sh runs, creates default dirs under /opt/data
 
-5. BOOTSTRAP (ordered)
+6. BOOTSTRAP (ordered)
    -> for each entry in bootstrap:
         docker exec sultanate-prov-<id> sh -c "<rendered command>"
    Uses: bootstrap[].command with variable substitution
 
-6. APPLY BERAT (see HERMES_CODING_BERAT_SPEC.md §5)
+7. APPLY BERAT (see HERMES_CODING_BERAT_SPEC.md §5)
    -> write rendered templates into the container volume
 
-7. STARTUP
+8. STARTUP
    -> docker exec -d sultanate-prov-<id> hermes gateway
    Uses: startup.command, startup.args
 ```
@@ -114,16 +122,15 @@ These are set by Vizier during `docker create`, not declared in the firman:
 
 | Config | Value | Source |
 |--------|-------|--------|
-| `--network` | `sultanate-internal` | Vizier config (internal-only Docker network) |
-| `HTTP_PROXY` | `http://<janissary-ip>:8080` | Vizier config |
-| `HTTPS_PROXY` | `http://<janissary-ip>:8080` | Vizier config |
+| `--network-mode` | `container:wg-client-prov-<id>` | Shares wg-client sidecar's network (WireGuard transparent proxy) |
 | `HERMES_HOME` | Value from `firman.yaml hermes_home` | firman.yaml |
 | `NODE_EXTRA_CA_CERTS` | `/usr/local/share/ca-certificates/sultanate-ca.crt` | Vizier hardcoded |
-| `--volume` | `prov-<id>-data:/opt/data` | Vizier-generated per-province volume |
+| `--volume` | `/opt/sultanate/provinces/<id>/data:/opt/data` | Host-mounted per-province data directory |
 
 The firman declares _what_ image and _what_ commands. Vizier provides the
-networking, proxy, and volume configuration that integrates the container
-into the Sultanate network.
+networking and volume configuration that integrates the container into the
+Sultanate network. Provinces access the internet via WireGuard transparent
+proxy (all traffic automatically routed through Janissary).
 
 ## 4. CA Certificate Installation
 
@@ -133,7 +140,7 @@ credential injection. Containers must trust the Sultanate CA.
 ### What Vizier Does
 
 ```
-1. docker cp /opt/sultanate/ca/sultanate-ca.crt \
+1. docker cp /opt/sultanate/certs/sultanate-ca.pem \
      sultanate-prov-<id>:/usr/local/share/ca-certificates/sultanate-ca.crt
 
 2. docker exec sultanate-prov-<id> update-ca-certificates
@@ -148,7 +155,7 @@ credential injection. Containers must trust the Sultanate CA.
 | `docker cp` + `update-ca-certificates` | System-wide trust: Python `requests`, `curl`, `git`, `apt`, Playwright/Chromium, and all programs using the OS trust store. |
 | `NODE_EXTRA_CA_CERTS` env var | Node.js processes (npm, npx, Node scripts) which use their own bundled CA store and ignore the OS store unless this env var is set. |
 
-The CA cert file lives on the host at `/opt/sultanate/ca/sultanate-ca.crt`.
+The CA cert file lives on the host at `/opt/sultanate/certs/sultanate-ca.pem`.
 It is generated once during Sultanate deployment and shared across all
 provinces. The private key (`sultanate-ca.key`) is only readable by
 Janissary's process -- never copied into containers.
@@ -182,8 +189,9 @@ firman and berat design.
 ### Volume Mount at /opt/data
 
 The image declares `/opt/data` as a VOLUME. Vizier creates a named Docker
-volume per province (`prov-<id>-data`) and mounts it here. This volume
-persists across container restarts.
+host directory per province (`/opt/sultanate/provinces/<id>/data`) and bind-mounts
+it here. This directory persists across container restarts and is accessible
+from the host for backup and inspection.
 
 Contents after entrypoint runs (defaults created by entrypoint.sh):
 
@@ -217,7 +225,7 @@ the entrypoint.
 
 | Upstream Feature | hermes-firman Usage |
 |-----------------|---------------------|
-| `/opt/data` volume | Vizier mounts a per-province named volume here. All state persists. |
+| `/opt/data` volume | Vizier bind-mounts a per-province host directory here. All state persists and is accessible from the host. |
 | Entrypoint creates defaults | Vizier lets the entrypoint run first, then overwrites with berat files. |
 | `hermes` user + gosu | Bootstrap and berat commands run via `docker exec` (as root by default in exec). Files written to `/opt/data` are accessible to the `hermes` user because the volume is owned by `hermes`. |
 | `hermes gateway` | Used as the startup command. Hermes reads config.yaml and SOUL.md from `$HERMES_HOME`, AGENTS.md from `workspace_dir`. |

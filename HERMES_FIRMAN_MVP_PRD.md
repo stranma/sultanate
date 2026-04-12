@@ -31,14 +31,14 @@ and environment variables at container creation time.
 
 The delta between a stock Hermes container and a Sultanate province:
 
-1. **Proxy configuration** -- `HTTP_PROXY`/`HTTPS_PROXY` env vars pointing
-   to Janissary, plus Sultanate CA cert for HTTPS MITM
+1. **Network routing** -- WireGuard transparent proxy routes all traffic
+   through Janissary, plus Sultanate CA cert for HTTPS MITM
 2. **Workspace bootstrap** -- clone target repo into `/opt/data/workspace`
 3. **Berat application** -- write berat's SOUL.md, AGENTS.md, config.yaml
    into the volume, overriding Hermes defaults
 4. **Telegram bot token** -- injected into config (low-risk secret, handled
    by Vizier)
-5. **Janissary MCP server** -- added to config.yaml's `mcp_servers` section
+5. **Janissary HTTP API** -- appeal/access-request endpoints added to config.yaml's `mcp_servers` section (HTTP transport)
 
 ## Province Bootstrap Sequence
 
@@ -47,7 +47,7 @@ Vizier executes these steps when creating a province:
 ```
 1. docker create from nousresearch/hermes-agent image
    -> internal Docker network only (no external route)
-   -> env: HTTP_PROXY, HTTPS_PROXY -> Janissary
+   -> traffic routed through Janissary via WireGuard transparent proxy
    -> env: HERMES_HOME=/opt/data
    -> volume: /opt/data (province-specific, persistent)
 
@@ -87,11 +87,11 @@ province if needed.
 
 **In scope:**
 - Province creation using upstream Hermes Agent Docker image
-- Proxy env vars + CA cert injection
+- WireGuard proxy routing + CA cert injection
 - Workspace bootstrap (repo clone)
 - Berat application (SOUL.md, AGENTS.md, config.yaml overwrite)
 - Telegram bot token injection
-- Janissary MCP server configuration
+- Janissary HTTP API configuration (appeal/access-request endpoints)
 
 **Deferred:**
 - Custom Dockerfile / image layers on top of upstream

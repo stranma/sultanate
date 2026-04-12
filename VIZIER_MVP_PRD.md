@@ -28,11 +28,11 @@ The CLI is the first deliverable. The Hermes agent is a thin layer on top.
 |----------|-------|
 | **User** | `vizier` (dedicated, non-root) |
 | **Groups** | Docker group |
-| **Network** | Through Janissary (HTTP_PROXY) |
+| **Network** | Through Janissary (WireGuard transparent proxy) |
 | **Can** | Create/manage containers, `docker exec` into provinces, write to Divan (provinces, berat port requests), read Divan (appeals) |
 | **Cannot** | Read grant values, access Infisical, modify network rules, open ports, read secrets |
 
-Vizier has the Janissary security MCP tool. If Vizier hits a blocked request,
+Vizier has the Janissary security HTTP API (appeal/access-request). If Vizier hits a blocked request,
 it can appeal or ask Sultan to tell Sentinel to add a permanent exception.
 
 ## CLI
@@ -64,7 +64,7 @@ provinces and provisions grants accordingly.
 1. Sultan: "vizier create hermes-firman --berat hermes-coding-berat --repo stranma/EFM"
 2. Vizier creates container from hermes-firman Docker image
    -> internal Docker network only (no external route)
-   -> HTTP_PROXY / HTTPS_PROXY pointing to Janissary
+   -> traffic routed through Janissary via WireGuard transparent proxy
 3. Vizier writes to Divan: province ID, IP, status=creating, firman, berat
 4. Vizier writes berat's non-HTTP port declarations to Divan as requests
 5. Sentinel sees new province in Divan:

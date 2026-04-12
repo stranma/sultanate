@@ -31,7 +31,7 @@ Sultan (Telegram)
   |     Province registry, grants, whitelists, blacklist, appeals
   |     Written by Vizier and Sentinel, read by Janissary
   |
-  +-- Janissary (forward proxy, dumb)
+  +-- Janissary (transparent proxy via WireGuard, dumb)
   |     Reads all state from Divan
   |     Whitelist: pass all traffic
   |     Non-whitelist: read-only (GET/HEAD pass, writes blocked)
@@ -65,6 +65,13 @@ values.
 **Low-risk config** (Telegram bot tokens, public endpoints) -- Vizier writes
 directly into containers. A leaked bot token lets someone chat as the agent,
 not access code.
+
+## CA Certificate Lifecycle
+
+A Sultanate-wide CA certificate is generated once at deploy time. The CA cert
+is installed in all province containers so mitmproxy can decrypt and inspect
+HTTPS traffic. The CA private key is only accessible to the Janissary
+container.
 
 ## Divan (Shared State)
 
@@ -132,7 +139,7 @@ design. Sultan has SSH to the host as fallback.
 ## Network Model
 
 - Provinces on internal Docker network (`internal: true`, no external route)
-- All province HTTP/HTTPS goes through Janissary (HTTP_PROXY env var)
+- All province HTTP/HTTPS goes through Janissary (WireGuard transparent proxy)
 - Non-HTTP access: blocked by default. Berat declares needed ports, Vizier
   writes them to Divan as requests, Sentinel asks Sultan for approval, then
   opens specific host:port pairs (iptables/Docker rules) and provisions
