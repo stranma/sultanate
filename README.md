@@ -18,6 +18,7 @@ MVP PRDs and technical specs are complete. Implementation next.
 |----------|-------------|
 | [MOTIVATION.md](MOTIVATION.md) | Problem, insight, vision |
 | [SULTANATE_MVP.md](SULTANATE_MVP.md) | MVP architecture, trust model, components |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | ASCII diagrams, user stories, e2e test assertions |
 
 ### MVP PRDs (what to build)
 
