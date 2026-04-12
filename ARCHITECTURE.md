@@ -167,9 +167,13 @@ Province                wg-client sidecar
 ```
 Sultan (Telegram)
    |
-   | "vizier create hermes-firman --berat hermes-coding-berat --repo stranma/EFM"
+   | "Set up a coding agent for the EFM repo"
    v
-Vizier
+Vizier (Hermes agent, understands natural language)
+   |
+   | Vizier interprets the request, picks the right firman
+   | and berat, then runs CLI commands via terminal tool:
+   |   vizier create hermes-firman --berat hermes-coding-berat --repo stranma/EFM
    |
    |  1. Load firman YAML + berat YAML
    |  2. Generate WireGuard peer config (assign 10.13.13.N)
@@ -216,10 +220,10 @@ Province is live, agent connects to Sultan via Telegram
 ### Stop / Destroy
 
 ```
-Sultan: "vizier stop {name}"         Sultan: "vizier destroy {name}"
+Sultan: "Stop the EFM agent"         Sultan: "Destroy the EFM province"
    |                                    |
    v                                    v
-Vizier                               Vizier
+Vizier (runs vizier stop)            Vizier (runs vizier destroy)
    |                                    |
    | 1. docker stop sultanate-{name}    | 1. docker stop sultanate-{name}
    | 2. docker stop wg-client-prov-XX   | 2. docker stop wg-client-prov-XX
@@ -243,11 +247,12 @@ assertions that map to integration/e2e test checks.
 
 ### US-1: Deploy Agent
 
-**Actor:** Sultan
-**Action:** Tell Vizier to create a province for a GitHub repo
+**Actor:** Sultan (via Telegram)
+**Action:** Tell Vizier in plain language to set up an agent for a repo
 
 ```
-Sultan: "vizier create hermes-firman --berat hermes-coding-berat --repo stranma/EFM"
+Sultan: "Set up a coding agent for the EFM repo"
+Vizier interprets, picks firman + berat, runs: vizier create hermes-firman --berat hermes-coding-berat --repo stranma/EFM
 ```
 
 **Expected outcome:** A running province with the agent connected to Telegram,
@@ -414,8 +419,8 @@ host:port pair via iptables/Docker rules.
 
 ### US-9: Province Stop and Destroy
 
-**Actor:** Sultan
-**Action:** Stop a running province, then destroy it
+**Actor:** Sultan (via Telegram)
+**Action:** Tell Vizier to stop a province, then destroy it
 
 **Expected outcome:** Province and sidecar containers stopped/removed. Divan
 records updated. WireGuard peer cleaned up.
