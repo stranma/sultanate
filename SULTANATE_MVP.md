@@ -76,12 +76,37 @@ REST.
 |----------|--------|--------|------|
 | `/provinces` | Vizier | Janissary, Sentinel | ID, IP, name, status, firman, berat |
 | `/grants` | Sentinel | Janissary | Source IP + domain -> header injection |
-| `/whitelists` | Sentinel, Vizier (berat defaults) | Janissary | Per-source allowed domains |
-| `/blacklist` | Sultan (via Sentinel) | Janissary | Global blocked domains |
+| `/whitelists` | Vizier (berat defaults at creation), Sentinel (Sultan's changes) | Janissary | Per-source allowed domains |
+| `/blacklist` | Sentinel (on Sultan's instruction) | Janissary | Global blocked domains |
 | `/appeals` | Janissary | Vizier | Pending/resolved appeal records |
+
+**Access control:** Divan authenticates callers via pre-shared API keys (one
+per component, generated at deploy time). Each key maps to a role with
+endpoint-level read/write permissions. Grant secret values are only returned
+to the Janissary role. See DIVAN_API_SPEC.md for details.
 
 Divan ships with Janissary in the same repo. It starts before all other
 components.
+
+## Artifact Formats
+
+**Firman** (container template) -- a directory containing a `firman.yaml`
+manifest and optional supporting files. Stored at a convention path on the
+host (`/opt/sultanate/firmans/<name>/`). Vizier resolves `--firman <name>`
+by looking up this path. See HERMES_FIRMAN_MVP_PRD.md.
+
+**Berat** (agent profile) -- a directory containing a `berat.yaml` manifest
+and template files (SOUL.md, AGENTS.md, config.yaml). Stored at
+`/opt/sultanate/berats/<name>/`. Vizier resolves `--berat <name>` by
+looking up this path. Templates use `{{variable}}` syntax with simple string
+substitution. See HERMES_CODING_BERAT_MVP_PRD.md.
+
+## GitHub Token Strategy
+
+Sultan pre-creates GitHub PATs (fine-grained, scoped per repo). Sultan gives
+them to Sentinel via Telegram: "Store this token for repo X." Sentinel stores
+in Infisical and writes the grant to Divan. Sentinel does not create tokens
+programmatically -- it stores and manages tokens that Sultan provides.
 
 ## Runtime
 
