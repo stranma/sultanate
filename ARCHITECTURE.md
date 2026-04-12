@@ -173,7 +173,7 @@ Vizier (Hermes agent, understands natural language)
    |
    | Vizier interprets the request, picks the right firman
    | and berat, then runs CLI commands via terminal tool:
-   |   vizier create hermes-firman --berat hermes-coding-berat --repo stranma/EFM
+   |   vizier-cli create hermes-firman --berat hermes-coding-berat --repo stranma/EFM
    |
    |  1. Load firman YAML + berat YAML
    |  2. Generate WireGuard peer config (assign 10.13.13.N)
@@ -223,7 +223,7 @@ Province is live, agent connects to Sultan via Telegram
 Sultan: "Stop the EFM agent"         Sultan: "Destroy the EFM province"
    |                                    |
    v                                    v
-Vizier (runs vizier stop)            Vizier (runs vizier destroy)
+Vizier (runs vizier-cli stop)        Vizier (runs vizier-cli destroy)
    |                                    |
    | 1. docker stop sultanate-{name}    | 1. docker stop sultanate-{name}
    | 2. docker stop wg-client-prov-XX   | 2. docker stop wg-client-prov-XX
@@ -252,7 +252,7 @@ assertions that map to integration/e2e test checks.
 
 ```
 Sultan: "Set up a coding agent for the EFM repo"
-Vizier interprets, picks firman + berat, runs: vizier create hermes-firman --berat hermes-coding-berat --repo stranma/EFM
+Vizier interprets, picks firman + berat, runs: vizier-cli create hermes-firman --berat hermes-coding-berat --repo stranma/EFM
 ```
 
 **Expected outcome:** A running province with the agent connected to Telegram,
@@ -463,5 +463,5 @@ is ready to create provinces.
 - [ ] Sentinel starts (host networking, not through Janissary)
 - [ ] Vizier starts after Janissary healthy
 - [ ] Vizier's DivanClient.wait_for_divan() succeeds
-- [ ] System ready: `vizier create` command works
+- [ ] System ready: `vizier-cli create` command works
 - [ ] WireGuard server interface is up on Janissary (10.13.13.1)
