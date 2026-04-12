@@ -149,7 +149,7 @@ POST /grants
   },
   "inject": {
     "header": "Authorization",
-    "value": "Bearer ghp_xxxxxxxxxxxx"
+    "value": "Bearer EXAMPLE_TOKEN_HERE"
   }
 }
 ```
@@ -194,7 +194,7 @@ Returns `200` with `{ "data": { "deleted": <count> } }`.
   },
   "inject": {
     "header": "Authorization",
-    "value": "Bearer ghp_xxxxxxxxxxxx"
+    "value": "Bearer EXAMPLE_TOKEN_HERE"
   },
   "created_at": "2026-04-12T10:31:00Z"
 }
