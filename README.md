@@ -1,47 +1,62 @@
 # Sultanate
 
-Secure agent deployment platform -- run multiple AI agents as your personal
-staff with frictionless deployment and enterprise-grade security.
+Secure agent deployment platform -- deploy AI agents fast via conversation,
+keep secrets safe, and swap in new runtimes easily.
 
-## Status: Design Phase
+Start with [MOTIVATION.md](MOTIVATION.md) for why, then
+[SULTANATE_MVP.md](SULTANATE_MVP.md) for the architecture.
 
-This repo currently contains **PRDs only** -- no implementation yet. The
-documents define the architecture, components, security model, and Phase 1
-scope.
+## Status: Spec Phase
 
-## What's here
+MVP PRDs and technical specs are complete. Implementation next.
 
-| Document | Defines |
-|----------|---------|
-| [SULTANATE.md](SULTANATE.md) | Umbrella architecture, trust model, deployment topology, component overview |
-| [JANISSARY_PRD_V2.md](JANISSARY_PRD_V2.md) | Security perimeter: egress proxy (Janissary), content inspector (Kashif), security advisor (Sentinel), shared state (Divan) |
-| [VIZIER_PRD_V3.md](VIZIER_PRD_V3.md) | Deployment orchestrator: province lifecycle, CLI, firman/berat templating |
-| [HERMES_FIRMAN_PRD_V1.md](HERMES_FIRMAN_PRD_V1.md) | Container template for Hermes-based provinces |
-| [HERMES_CODING_BERAT_PRD_V1.md](HERMES_CODING_BERAT_PRD_V1.md) | Coding agent profile: soul, tools, whitelist, grants |
+## Documents
 
-Start with `SULTANATE.md` -- it defines all components and how they fit
-together.
+### Motivation & Architecture
 
-## Implementation Notes
+| Document | Description |
+|----------|-------------|
+| [MOTIVATION.md](MOTIVATION.md) | Problem, insight, vision |
+| [SULTANATE_MVP.md](SULTANATE_MVP.md) | MVP architecture, trust model, components |
 
-**Janissary + Sandcat:** The [Sandcat](https://github.com/softwaremill/sandcat) project
-could serve as a foundation for Janissary. Sandcat already provides the core primitives
-Janissary needs: a transparent mitmproxy-based egress proxy with allowlist/deny-list
-network rules, and a credential injection system that substitutes placeholders with real
-secrets at the proxy level (so containers never see actual credentials). The WireGuard
-tunneling approach ensures all container traffic is routed through the proxy without
-per-tool configuration. Janissary's additional scope -- Kashif content inspection,
-Sentinel advisory layer, Divan integration -- would be built on top.
+### MVP PRDs (what to build)
 
-## Planned repo structure
+| Document | Component |
+|----------|-----------|
+| [JANISSARY_MVP_PRD.md](JANISSARY_MVP_PRD.md) | Egress proxy + credential injection |
+| [SENTINEL_MVP_PRD.md](SENTINEL_MVP_PRD.md) | Secret management agent |
+| [VIZIER_MVP_PRD.md](VIZIER_MVP_PRD.md) | Province orchestration CLI + agent |
+| [HERMES_FIRMAN_MVP_PRD.md](HERMES_FIRMAN_MVP_PRD.md) | Hermes container template |
+| [HERMES_CODING_BERAT_MVP_PRD.md](HERMES_CODING_BERAT_MVP_PRD.md) | Coding agent profile |
 
-Once implementation begins, component repos become git submodules here:
+### Technical Specs (how to build)
+
+| Document | Component |
+|----------|-----------|
+| [DIVAN_API_SPEC.md](DIVAN_API_SPEC.md) | Shared state API contract (all components depend on this) |
+| [JANISSARY_SPEC.md](JANISSARY_SPEC.md) | Sandcat/mitmproxy proxy, CA cert, appeal API |
+| [SENTINEL_SPEC.md](SENTINEL_SPEC.md) | Infisical integration, grant lifecycle, iptables |
+| [VIZIER_SPEC.md](VIZIER_SPEC.md) | CLI, Docker integration, berat/firman loading |
+| [HERMES_FIRMAN_SPEC.md](HERMES_FIRMAN_SPEC.md) | firman.yaml schema, upstream image usage |
+| [HERMES_CODING_BERAT_SPEC.md](HERMES_CODING_BERAT_SPEC.md) | berat.yaml schema, templates, security policy |
+
+### Full PRDs (future scope, reference only)
+
+| Document | Description |
+|----------|-------------|
+| [SULTANATE.md](SULTANATE.md) | Full architecture with Kashif, Divan dashboard, SentinelGate |
+| [JANISSARY_PRD_V2.md](JANISSARY_PRD_V2.md) | Full security perimeter (4-layer traffic, Kashif, Sentinel) |
+| [VIZIER_PRD_V3.md](VIZIER_PRD_V3.md) | Full orchestrator |
+| [HERMES_FIRMAN_PRD_V1.md](HERMES_FIRMAN_PRD_V1.md) | Full container template |
+| [HERMES_CODING_BERAT_PRD_V1.md](HERMES_CODING_BERAT_PRD_V1.md) | Full coding agent profile |
+| [SENTINELGATE_ANALYSIS.md](SENTINELGATE_ANALYSIS.md) | SentinelGate integration analysis |
+
+## Repo Structure
 
 | Repo | Contents |
 |------|----------|
-| `sultanate` (this repo) | Umbrella docs, deployment guide, submodules |
-| `vizier` | Orchestration, province lifecycle, CLI |
-| `janissary` | Egress proxy, content inspector (Kashif), security advisor (Sentinel) |
-| `divan` | Shared state store, HTTP API, web dashboard |
-| `hermes-firman` | Hermes container template (Docker image, bootstrap) |
-| `hermes-coding-berat` | Coding agent profile (soul, tools, security policy) |
+| `sultanate` (this repo) | Umbrella docs, specs, deployment guide |
+| [`vizier`](https://github.com/stranma/Vizier) | Province orchestration CLI + Hermes agent |
+| [`janissary`](https://github.com/stranma/janissary) | Egress proxy (Janissary), shared state (Divan), secret management (Sentinel) |
+| [`hermes-firman`](https://github.com/stranma/hermes-firman) | Hermes container template |
+| [`hermes-coding-berat`](https://github.com/stranma/hermes-coding-berat) | Coding agent profile |
