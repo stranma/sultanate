@@ -109,7 +109,7 @@ request_access(service, scope, justification)
 ```
 
 These route through Kashif (content inspector) for malice screening, then
-to Sentinel (security advisor) if needed, then to Sultan for final approval.
+to Aga (security advisor) if needed, then to Sultan for final approval.
 
 ### Hermes Configuration
 
@@ -148,7 +148,7 @@ Sultan can override model and tool list per province at creation time.
 
 ## Security Policy
 
-The berat defines the initial security posture. Sentinel (security advisor)
+The berat defines the initial security posture. Aga (security advisor)
 reads these defaults from Divan (shared state store) when provisioning a new
 province.
 
@@ -175,10 +175,10 @@ Credentials injected by Janissary for this berat type:
 
 | Grant | Domain | Injection | Source |
 |-------|--------|-----------|--------|
-| GitHub read/write | `api.github.com`, `github.com` | `Authorization: Bearer <token>` | Sentinel provisions scoped token |
+| GitHub read/write | `api.github.com`, `github.com` | `Authorization: Bearer <token>` | Aga provisions scoped token |
 
 Additional grants (e.g., cloud APIs, third-party services) require Sultan
-approval via Sentinel.
+approval via Aga.
 
 ### Size Gate
 

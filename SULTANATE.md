@@ -69,9 +69,9 @@ deployment and security."
   rules. No LLM, no content evaluation. Credential injection via grant table.
 - **Kashif** (content inspector) -- paranoid local LLM that screens all
   content for malice. Handles Layer 4 appeal triage and screens all
-  Sentinel ingress. Single question: "can this be in any way malicious?"
+  Aga ingress. Single question: "can this be in any way malicious?"
   Fail-closed: if down or unsure, block and alert Sultan.
-- **Sentinel** (security advisor) -- trusted, operator-facing agent that
+- **Aga** (security advisor) -- trusted, operator-facing agent that
   manages secrets, contextualizes alerts, curates blacklists, and reviews
   access requests. All inputs pre-screened by Kashif.
 - **Divan** (shared state store) -- all components read from and write to
@@ -79,13 +79,13 @@ deployment and security."
   a registry and API.
 
 **Independently deployable.** Vizier and the security perimeter
-(Janissary + Kashif + Sentinel) are separate products in separate repos.
+(Janissary + Kashif + Aga) are separate products in separate repos.
 They compose together but can be deployed independently. Firmans and berats
 may also live in their own repos.
 
-**Hermes-native, Phase 1.** Sentinel and Vizier are implemented as Hermes
+**Hermes-native, Phase 1.** Aga and Vizier are implemented as Hermes
 agents. The infrastructure layer (Janissary, Kashif, Divan) is
-runtime-independent. Phase 2 adds OpenClaw support for Sentinel and Vizier.
+runtime-independent. Phase 2 adds OpenClaw support for Aga and Vizier.
 Phase 3 targets runtime-agnostic berats that work across multiple runtimes.
 
 ## The Ottoman Metaphor
@@ -99,7 +99,7 @@ The naming isn't decorative -- it maps to a governance model:
 | **Vizier** | Deployment and orchestration | Grand Vizier -- manages the court, executes Sultan's will |
 | **Janissary** | Egress proxy (dumb, no LLM) | Elite guard corps -- protects the gates, follows rules |
 | **Kashif** | Content inspector (local LLM) | The taster -- inspects everything for poison before it reaches the court |
-| **Sentinel** | Security advisor (trusted agent) | The watchman -- reports to Sultan what he saw |
+| **Aga** | Chief of security (trusted agent) | Agha of the Janissaries -- commands the guard corps, directs Kashif's inspections, manages secrets, reports to Sultan |
 | **Divan** | Shared state store | The imperial council registry -- records everything, decides nothing |
 | **Province** | Isolated container | A governed territory -- has its own governor, boundaries, and rules |
 | **Pasha** | Agent inside a province | Provincial governor -- runs the territory, reports up |
@@ -108,9 +108,9 @@ The naming isn't decorative -- it maps to a governance model:
 | **Realm** | All active provinces | The empire's territories -- what Sultan surveys |
 
 The metaphor works because it encodes the trust hierarchy: Sultan trusts
-Vizier, Janissary, Kashif, and Sentinel (they run with elevated privileges),
+Vizier, Janissary, Kashif, and Aga (they run with elevated privileges),
 but trusts no Pasha (agent inside a province) fully -- every province is
-isolated and monitored. Sentinel is trusted but guarded: all its inputs are
+isolated and monitored. Aga is trusted but guarded: all its inputs are
 screened by Kashif before ingestion. This matches the security model
 directly.
 
@@ -123,7 +123,7 @@ user-level isolation:
 |-----------|------|-------------|-----|
 | **Janissary** | root | Network control, iptables | Needs networking to enforce egress as proxy |
 | **Kashif** | root (runs alongside Janissary) | Local LLM access, Divan read | Screens content for malice, no secrets access, no outbound of its own |
-| **Sentinel** | root | Full host access, secret management | Manages secrets, reads audit state, contextualizes alerts |
+| **Aga** | root | Full host access, secret management | Manages secrets, reads audit state, contextualizes alerts |
 | **Vizier** | dedicated user (`vizier`) | Docker group, no root | Creates/manages containers, writes province state to Divan |
 | **Divan** | runs on host | Accessible to all components | Shared state store, no elevated permissions needed |
 | **Provinces** | containerized | No host access, no direct internet | All egress through Janissary. Isolated workspace per province |
@@ -134,25 +134,25 @@ user-level isolation:
 Province A --+
 Province B --+-- HTTP_PROXY --> Janissary --> Internet (whitelisted only)
 Province C --+                      |
-                                    +-- Kashif (screens appeals + Sentinel ingress)
+                                    +-- Kashif (screens appeals + Aga ingress)
                                     +-- Divan (shared state)
-                                    +-- Secret Vault (Infisical)
-                                    +-- Sentinel --> Sultan (alerts with context)
+                                    +-- Secret Vault (OpenBao, local)
+                                    +-- Aga --> Sultan (alerts with context)
 ```
 
 - Provinces sit on an internal Docker network (`internal: true`, no external
   route)
 - Janissary is the only component bridging internal and external networks
 - Janissary itself has no outbound access -- it only forwards traffic and
-  talks to Divan/Infisical (local). A compromised Janissary cannot become
-  an open relay.
-- Kashif screens all appeals and all Sentinel ingress (Pasha-originated
+  talks to Divan and OpenBao (both local). A compromised Janissary cannot
+  become an open relay.
+- Kashif screens all appeals and all Aga ingress (Pasha-originated
   content, fetched web pages) before delivery. Fail-closed: if Kashif is
   down or unsure, block and alert Sultan.
-- Sentinel's outbound goes through Janissary with whitelist-only policy.
-  Sentinel cannot expand its own whitelist -- only Sultan can. Any web
-  content Sentinel fetches is inspected by Kashif before ingestion.
-- Every alert passes through Sentinel first, which adds operator-facing
+- Aga's outbound goes through Janissary with whitelist-only policy.
+  Aga cannot expand its own whitelist -- only Sultan can. Any web
+  content Aga fetches is inspected by Kashif before ingestion.
+- Every alert passes through Aga first, which adds operator-facing
   context before reaching Sultan
 - Only HTTP/HTTPS traffic supported (Phase 1). Non-HTTP protocols blocked
   by network topology.
@@ -165,7 +165,7 @@ Vizier ---writes---> Divan <---reads--- Janissary
                        |
               reads/writes
                        |
-                   Sentinel
+                   Aga
                        ^
                        |
                   screened by
@@ -174,7 +174,7 @@ Vizier ---writes---> Divan <---reads--- Janissary
 ```
 
 No component calls another directly. All coordination happens through Divan.
-Kashif screens all Pasha-originated content before it reaches Sentinel.
+Kashif screens all Pasha-originated content before it reaches Aga.
 
 **Repo structure:**
 
@@ -182,7 +182,7 @@ Kashif screens all Pasha-originated content before it reaches Sentinel.
 |------|----------|
 | `sultanate` | Superproject -- umbrella docs, deployment guide, submodules |
 | `vizier` | Orchestration, province lifecycle, CLI |
-| `janissary` | Egress proxy (Janissary), content inspector (Kashif), security advisor (Sentinel), Divan, audit |
+| `janissary` | Egress proxy (Janissary), content inspector (Kashif), security advisor (Aga), Divan, audit |
 | `hermes-firman` | Hermes container template (Docker image, bootstrap, runtime startup) |
 | `hermes-coding-berat` | Coding agent profile (soul, tools, security policy) |
 
@@ -205,19 +205,19 @@ Kashif. Transparent credential injection via grant table. No LLM, no content
 evaluation, no outbound access of its own. See `JANISSARY_PRD_V2.md`.
 
 **Kashif** -- paranoid content inspector running a local LLM on the host.
-Screens all Pasha-originated content before it reaches Sentinel (appeal
+Screens all Pasha-originated content before it reaches Aga (appeal
 justifications, access requests, freeform input). Screens fetched web content
-before Sentinel ingests it. Handles Layer 4 appeal triage (approve obvious
-safe, block obvious bad, escalate unclear to Sentinel). Single question: "can
+before Aga ingests it. Handles Layer 4 appeal triage (approve obvious
+safe, block obvious bad, escalate unclear to Aga). Single question: "can
 this be in any way malicious?" Fail-closed: if down or unsure, block and alert
 Sultan. Ships with Janissary.
 
-**Sentinel** -- trusted, operator-facing Hermes agent running as root. Manages
+**Aga** -- trusted, operator-facing Hermes agent running as root. Manages
 secrets (creation, rotation, revocation), contextualizes all alerts before
 they reach Sultan, curates the blacklist, reviews access requests, answers
 audit queries. Ships with Janissary. Not part of deterministic enforcement.
-All Sentinel inputs are pre-screened by Kashif for prompt injection and
-manipulation. Sentinel cannot expand its own whitelist -- only Sultan can.
+All Aga inputs are pre-screened by Kashif for prompt injection and
+manipulation. Aga cannot expand its own whitelist -- only Sultan can.
 
 **Divan** -- shared state store and API. Holds province registry, grant table,
 whitelists, blacklist, and audit log. All components communicate through
@@ -248,14 +248,14 @@ can communicate with a Pasha directly.
 All components fail closed. If Divan is unreachable, Janissary enforces
 last-cached rules (whitelist, blacklist, grants). If Janissary has never
 successfully read from Divan (fresh start, no cache), it blocks all traffic.
-Kashif blocks all content if its LLM is unresponsive or times out. Sentinel
+Kashif blocks all content if its LLM is unresponsive or times out. Aga
 alerts Sultan if it cannot reach Divan. No component fails open.
 
 ## Communication Model
 
 **Phase 1: one Telegram bot per agent.** Sultan communicates with each Pasha,
-Vizier, and Sentinel through separate Telegram bots in dedicated threads.
-Each agent has its own bot token (provisioned by Sentinel). Communication is
+Vizier, and Aga through separate Telegram bots in dedicated threads.
+Each agent has its own bot token (provisioned by Aga). Communication is
 1:1 -- Sultan to agent, agent to Sultan.
 
 **Phase 2: shared Telegram channels.** Multiple agents and Sultan in the same
@@ -276,16 +276,16 @@ cd sultanate
 
 **What `deploy.sh` must handle:**
 - Install dependencies (Docker, Docker Compose)
-- Pull/build all component images (Janissary, Kashif, Sentinel, Divan, Vizier)
+- Pull/build all component images (Janissary, Kashif, Aga, Divan, Vizier)
 - Create internal Docker network (provinces, no external route)
-- Start Janissary (egress proxy) + Kashif (content inspector) + Sentinel
+- Start Janissary (egress proxy) + Kashif (content inspector) + Aga
   (security advisor) + Divan (state store)
 - Start Vizier (orchestrator)
 - Prompt Sultan for initial configuration:
   - Telegram bot tokens (or auto-create)
-  - Infisical/secret vault setup
+  - OpenBao initialization and unseal (Sultan holds unseal key(s))
   - Sultan's Telegram user ID
-- Validate connectivity (Janissary reachable, Divan healthy, Sentinel online)
+- Validate connectivity (Janissary reachable, Divan healthy, Aga online)
 
 **What creating a province should look like:**
 ```bash
@@ -298,7 +298,7 @@ Or via Telegram to Vizier: "Create a coding province for stranma/EFM."
 **Per-component deployment:**
 Each component repo must also be independently deployable for development
 and testing:
-- `janissary/`: `docker compose up` starts Janissary + Kashif + Sentinel + Divan
+- `janissary/`: `docker compose up` starts Janissary + Kashif + Aga + Divan
 - `vizier/`: `docker compose up` starts Vizier (requires Divan endpoint)
 - `hermes-firman/`: `docker build` produces the province base image
 
@@ -315,23 +315,23 @@ traffic model (whitelist, size gate on outbound payloads, blacklist),
 transparent credential injection via grant table, security MCP tool. No LLM,
 no content evaluation, no outbound access of its own.
 
-**Kashif:** local LLM content inspector. Layer 4 appeal triage, Sentinel
+**Kashif:** local LLM content inspector. Layer 4 appeal triage, Aga
 ingress screening, fetched content inspection. Fail-closed. Ships with
 Janissary.
 
-**Sentinel:** secret management (create, rotate, revoke), alert
+**Aga:** secret management (create, rotate, revoke), alert
 contextualization, blacklist curation, access request review. All inputs
 screened by Kashif. Ships with Janissary, non-optional.
 
 **Divan:** SQLite + HTTP API. Province registry, grant table, whitelists,
 blacklist, audit log, read-only web dashboard.
 
-**Runtime:** Hermes-native. Sentinel and Vizier are Hermes agents.
+**Runtime:** Hermes-native. Aga and Vizier are Hermes agents.
 Infrastructure layer (Janissary, Kashif, Divan) is runtime-independent.
 
 **Deferred:**
 - Shared Telegram channels for multi-agent coordination (Phase 2)
-- OpenClaw support for Sentinel and Vizier (Phase 2)
+- OpenClaw support for Aga and Vizier (Phase 2)
 - Firman/berat boundary review -- security policy ownership, tool/firman
   compatibility validation (Phase 2)
 - Additional firmans and berats (Phase 2)

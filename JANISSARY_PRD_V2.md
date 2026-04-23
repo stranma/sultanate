@@ -11,12 +11,12 @@ container) can reach the internet except through Janissary.
 
 Janissary does not know what a province is. It reads rules from Divan (the
 shared state store) and applies them based on source IP. Kashif (the content
-inspector) screens appeals and Sentinel ingress for malice. Sentinel (the
+inspector) screens appeals and Aga ingress for malice. Aga (the
 security advisor) -- a trusted Hermes agent also running as root -- is the
 intelligence layer: it manages secrets, contextualizes alerts, and curates
-blacklists. All Sentinel inputs are pre-screened by Kashif.
+blacklists. All Aga inputs are pre-screened by Kashif.
 
-Janissary, Kashif, and Sentinel are one product, one repo.
+Janissary, Kashif, and Aga are one product, one repo.
 
 ## Product Boundary
 
@@ -30,15 +30,15 @@ Janissary, Kashif, and Sentinel are one product, one repo.
 **Kashif provides:**
 - Content inspection -- screens all content for malice before delivery
 - Layer 4 appeal triage (approve obvious safe, block obvious bad, escalate
-  unclear to Sentinel)
-- Sentinel ingress screening -- all Pasha (agent inside province) originated
+  unclear to Aga)
+- Aga ingress screening -- all Pasha (agent inside province) originated
   content and fetched
-  web pages screened before Sentinel ingests them
+  web pages screened before Aga ingests them
 - Prompt injection and manipulation detection
 - Fail-closed behavior -- if down or unsure, block and alert Sultan
   (human operator)
 
-**Sentinel provides:**
+**Aga provides:**
 - Secret management (creation, rotation, revocation, provisioning)
 - Operator-facing alert summaries with context for Sultan
 - Blacklist curation
@@ -50,11 +50,11 @@ Janissary, Kashif, and Sentinel are one product, one repo.
 - Province registry (ID, IP, status, firman -- written by Vizier)
 - Grant table (source IP + destination -> credential injection rule)
 - Blacklist
-- Whitelist per source (province allowlists, Sentinel's own whitelist)
+- Whitelist per source (province allowlists, Aga's own whitelist)
 - Audit log
 - Web dashboard (read-only for Sultan)
 
-**Janissary + Sentinel do NOT provide:**
+**Janissary + Aga do NOT provide:**
 - Container orchestration (Vizier's job)
 - Agent runtime or task management (runtime's job)
 - Province lifecycle management (Vizier's job)
@@ -66,8 +66,8 @@ Janissary, Kashif, and Sentinel are one product, one repo.
   LLM, no content evaluation, no state management, no agent communication,
   no province awareness.
 - **Janissary has no outbound access.** Janissary itself never initiates
-  outbound internet connections. It only forwards province/Sentinel traffic
-  and communicates with Divan and Secret Vault (both local). This prevents
+  outbound internet connections. It only forwards province/Aga traffic
+  and communicates with Divan and OpenBao (both local). This prevents
   a compromised Janissary from becoming an open relay.
 - **Deterministic enforcement.** Traffic filtering and credential injection
   never depend on an LLM call. Whitelists, blacklists, size thresholds, and
@@ -77,7 +77,7 @@ Janissary, Kashif, and Sentinel are one product, one repo.
   safe, block obvious bad, escalate unclear). Fail-closed: if Kashif is down
   or unsure, block and alert Sultan. High false-positive rate is acceptable;
   high false-negative rate is not.
-- **LLM is advisory only.** Kashif and Sentinel review appealed traffic.
+- **LLM is advisory only.** Kashif and Aga review appealed traffic.
   They can escalate to Sultan but cannot override a block or grant access on
   their own without Sultan's approval (unless within auto-approve policy).
 - **Network-level enforcement.** Agents cannot bypass Janissary because it is
@@ -87,15 +87,15 @@ Janissary, Kashif, and Sentinel are one product, one repo.
   support for WebSocket) passes through the proxy. Non-HTTP protocols (SSH,
   raw TCP, gRPC) are blocked by the network topology. Support for additional
   protocols (database TCP, VPN tunnels) is a future consideration.
-- **Sentinel is constrained.** Sentinel's own outbound traffic goes through
+- **Aga is constrained.** Aga's own outbound traffic goes through
   Janissary with a strict whitelist-only policy (size gate = 0, no default
-  pass). Sentinel cannot expand its own whitelist -- only Sultan can.
+  pass). Aga cannot expand its own whitelist -- only Sultan can.
 - **Minimal trust in agents.** Assume any agent could be confused, misled, or
   adversarial. Janissary enforces policy regardless of agent intent.
 - **Province-scoped grants.** A grant for one source IP does not apply to
   another. Revocation is per-province.
 - **One-way dependencies.** Janissary reads from Divan, never calls Vizier
-  (deployment orchestrator) or Sentinel directly. Sentinel reads/writes
+  (deployment orchestrator) or Aga directly. Aga reads/writes
   Divan, never calls Vizier. Vizier writes to Divan, never calls Janissary.
 
 ## Traffic Layers
@@ -127,7 +127,7 @@ The 5KB threshold is configurable per province and is a conservative starting
 point. To be tuned after observing real traffic patterns.
 
 **Layer 3: Blacklist (block known bad)**
-Curated by Sentinel in Divan. Known paste sites, exfiltration endpoints,
+Curated by Aga in Divan. Known paste sites, exfiltration endpoints,
 malicious domains. Blocked immediately.
 
 **Layer 4: Appeal (agent requests review)**
@@ -139,17 +139,17 @@ it is legitimate:
 2. Kashif (content inspector) reviews the full payload (fast, paranoid):
    - Obviously safe -- approve
    - Obviously bad -- block
-   - Unclear -- escalate to Sentinel
-   - Payload too large for Kashif's context window -- escalate to Sentinel
-3. Sentinel reviews with broader context, can approve or escalate to Sultan
+   - Unclear -- escalate to Aga
+   - Payload too large for Kashif's context window -- escalate to Aga
+3. Aga reviews with broader context, can approve or escalate to Sultan
 4. Sultan makes final decision if needed
 
 **Default:** Non-whitelisted, small payload -- pass.
 
-### Sentinel Traffic
+### Aga Traffic
 
 Strict whitelist only. No size gate, no default pass. Everything not
-whitelisted is blocked. Sentinel has root access and can appeal to Sultan
+whitelisted is blocked. Aga has root access and can appeal to Sultan
 to expand its whitelist, but cannot modify it itself.
 
 ## Credential Injection
@@ -172,9 +172,24 @@ Janissary reads the **grant table** from Divan:
   "inject": {
     "header": "Authorization",
     "value": "Bearer ghp_xxxxxxxxxxxx"
-  }
+  },
+  "openbao_lease_id": "auth/token/create/abcd1234",
+  "lease_expires_at": "2026-04-23T18:00:00Z"
 }
 ```
+
+The `value` field holds the current credential. Aga renews the OpenBao
+lease before expiry and rewrites `value` + `lease_expires_at` in place.
+Janissary reads the record as-is -- it does not call OpenBao directly.
+If Aga fails to renew before `lease_expires_at`, Janissary treats the
+grant as expired and stops injecting (fail-closed); the credential also
+expires server-side in OpenBao at the same time.
+
+**Phase 2 option:** move `value` out of Divan entirely. Janissary fetches
+the current credential from OpenBao on demand (with short in-memory cache)
+using its own read-only AppRole. This keeps Divan free of raw secrets and
+limits credential-in-memory to the Janissary process only. Deferred for
+Phase 1 simplicity.
 
 When Janissary sees an outbound request:
 
@@ -186,11 +201,11 @@ When Janissary sees an outbound request:
 
 ### Two Classes of Secrets
 
-- **Dangerous secrets** (repo access, API keys, cloud credentials) -- Sentinel
+- **Dangerous secrets** (repo access, API keys, cloud credentials) -- Aga
   manages, Janissary injects transparently via grant table. Agent never sees
   the raw value.
 - **Non-sensitive config** (public endpoints, feature flags, etc.) -- passed
-  directly to province environment. Out of scope for Janissary/Sentinel.
+  directly to province environment. Out of scope for Janissary/Aga.
 
 Sultan decides which class a secret belongs to.
 
@@ -200,25 +215,51 @@ Sultan decides which class a secret belongs to.
 1. Province created from firman (container template)
    --> Vizier writes province to Divan (ID, IP, status, firman)
    --> firman defines default grants
-2. Sentinel reads new province from Divan, provisions credentials
-   --> creates tokens in Secret Vault (Infisical)
-   --> writes grant rules to Divan's grant table
+2. Aga reads new province from Divan, provisions credentials
+   --> calls OpenBao to generate credential (dynamic where possible:
+       GitHub App token, DB creds, SSH cert, PKI cert)
+   --> OpenBao returns a value and a lease with TTL
+   --> Aga writes grant rules to Divan's grant table, tagged
+       with the OpenBao lease ID
 3. Pasha (agent inside province) works, git/API calls go through Janissary transparently
    --> Janissary reads grant table, injects credentials on match
 4. Pasha needs new access mid-task
-   --> Pasha requests via MCP tool or runtime channel to Sentinel
-5. Sentinel evaluates:
+   --> Pasha requests via MCP tool or runtime channel to Aga
+5. Aga evaluates:
    --> auto-approve if within policy (e.g., read access to firman
        default repos, standard package registries)
    --> escalate to Sultan if outside policy (e.g., write access,
        new API keys, unknown services, any request after a
        security incident)
-6. Approved --> Sentinel creates credential, writes to grant table
-7. Province destroyed --> Vizier updates Divan, Sentinel revokes
-   all grants for that province
+6. Approved --> Aga calls OpenBao, writes lease-bound grant to Divan
+7. Province destroyed --> Vizier updates Divan, Aga revokes
+   all OpenBao leases for that province. Any missed revocation is
+   bounded by the lease TTL -- OpenBao expires the credential
+   server-side even if Aga fails to act.
 ```
 
-Sultan can revoke any grant at any time via Sentinel.
+**Why OpenBao (not a static KV vault like Infisical):**
+- **Dynamic secrets** -- GitHub App tokens, DB creds, SSH CA-issued keys,
+  PKI-issued certs generated per-province on demand. Short-lived by default.
+- **Lease-based revocation** -- credentials expire server-side on TTL.
+  Trust in Aga to catch every province destroy event becomes a
+  latency optimization, not a correctness requirement.
+- **Audit devices** -- every secret access is logged with HMAC integrity;
+  Divan reads this feed for the dashboard.
+- **Transit engine** -- Divan can encrypt audit records at rest via
+  OpenBao without holding key material.
+- **Apache 2.0, single binary, self-hosted.** No vendor lock-in.
+
+Aga is the sole OpenBao client. Pashas never authenticate to OpenBao;
+they only ever see Janissary-injected headers.
+
+**Secret zero:** Aga needs credentials to reach OpenBao. Phase 1
+default is manual unseal by Sultan at boot (Shamir split not required for
+single-operator). Auto-unseal against a host-KMS or file-wrapped key is
+available for dev; document the trade-off explicitly -- auto-unseal means
+Aga-compromise equals OpenBao-compromise.
+
+Sultan can revoke any grant at any time via Aga.
 
 ## Security MCP Tool
 
@@ -248,7 +289,7 @@ request_access(
 )
 ```
 
-Routed to Sentinel for evaluation.
+Routed to Aga for evaluation.
 
 For non-MCP runtimes, both tools are backed by Janissary's HTTP API as a
 fallback.
@@ -262,13 +303,13 @@ has one job: "can this be in any way malicious?"
 
 - **Appeal triage** -- reviews Layer 4 appeals. Receives full payload, URL,
   method, headers, and justification. Approves obvious safe, blocks obvious
-  bad, escalates unclear to Sentinel.
-- **Sentinel ingress screening** -- all Pasha-originated content (appeal
+  bad, escalates unclear to Aga.
+- **Aga ingress screening** -- all Pasha-originated content (appeal
   justifications, access request text, freeform input) is screened by Kashif
-  before reaching Sentinel's context window.
-- **Fetched content inspection** -- when Sentinel fetches web content (after
+  before reaching Aga's context window.
+- **Fetched content inspection** -- when Aga fetches web content (after
   Sultan approves the whitelist addition), Kashif inspects the fetched content
-  before Sentinel ingests it.
+  before Aga ingests it.
 - **Prompt injection detection** -- flags manipulation attempts, injection
   patterns, and unexpected payloads.
 
@@ -278,29 +319,29 @@ has one job: "can this be in any way malicious?"
 - Must respond within a configurable timeout (e.g., 5s). If no response,
   default to block.
 - High false-positive rate is acceptable; high false-negative rate is not.
-- Fail-closed: if Kashif is down, all appeals are blocked and all Sentinel
+- Fail-closed: if Kashif is down, all appeals are blocked and all Aga
   ingress is held until Kashif recovers or Sultan intervenes.
 
 Kashif is NOT in the hot path for normal traffic. It processes appeals and
-screens Sentinel inputs. Whitelisted traffic passes through Janissary without
+screens Aga inputs. Whitelisted traffic passes through Janissary without
 touching Kashif.
 
-## Sentinel Agent
+## Aga Agent
 
-Sentinel is a trusted Hermes agent running as root on the host. It is the
+Aga is a trusted Hermes agent running as root on the host. It is the
 operator-facing intelligence layer.
 
-**Sentinel is a trusted component.** It runs with elevated privileges and has
+**Aga is a trusted component.** It runs with elevated privileges and has
 real authority over secrets and access grants. Unlike Pashas (agents inside
-provinces), Sentinel is not sandboxed -- it is part of the system's trusted
+provinces), Aga is not sandboxed -- it is part of the system's trusted
 core alongside Vizier and Janissary. Trust is layered: all external and
-Pasha-originated content reaching Sentinel is first screened by Kashif for
+Pasha-originated content reaching Aga is first screened by Kashif for
 prompt injection and manipulation attempts.
 
 **Responsibilities:**
 - **Secret management** -- creates tokens, rotates them, provisions grants,
   revokes on province destruction. Asks Sultan for approval when needed.
-- **Alert contextualization** -- every alert passes through Sentinel before
+- **Alert contextualization** -- every alert passes through Aga before
   reaching Sultan. Adds explanation of what happened, why it was blocked,
   what the options are.
 - **Blacklist curation** -- maintains and updates the blacklist in Divan
@@ -311,18 +352,18 @@ prompt injection and manipulation attempts.
   Sultan can make informed decisions.
 - **Audit queries** -- answers Sultan's questions about province activity.
 
-**Sentinel is not optional.** It ships with Janissary and Kashif in Phase 1.
+**Aga is not optional.** It ships with Janissary and Kashif in Phase 1.
 
-**Sentinel's own security:**
-- All Sentinel inputs are pre-screened by Kashif for malice
-- Sentinel's outbound traffic goes through Janissary with whitelist-only
+**Aga's own security:**
+- All Aga inputs are pre-screened by Kashif for malice
+- Aga's outbound traffic goes through Janissary with whitelist-only
   policy (no size gate pass-through)
-- Any web content Sentinel fetches is inspected by Kashif before ingestion
-- Sentinel cannot expand its own whitelist -- only Sultan can
-- Sentinel can appeal to Sultan to expand its whitelist
-- Sultan can modify Sentinel's whitelist directly (root access)
+- Any web content Aga fetches is inspected by Kashif before ingestion
+- Aga cannot expand its own whitelist -- only Sultan can
+- Aga can appeal to Sultan to expand its whitelist
+- Sultan can modify Aga's whitelist directly (root access)
 
-**Example alerts Sentinel sends to Sultan:**
+**Example alerts Aga sends to Sultan:**
 - "Province (container) A tried to POST 45KB to paste.mozilla.org -- blocked
   by size gate. Kashif flagged the payload as a Python module. Approve or
   deny?"
@@ -339,8 +380,8 @@ orchestrator -- components report state to it, others read from it.
 **What Divan holds:**
 - Province registry (ID, IP, status, firman used)
 - Grant table (source IP + destination -> credential injection rule)
-- Blacklist (curated by Sentinel)
-- Whitelist per source (province allowlists, Sentinel's own whitelist)
+- Blacklist (curated by Aga)
+- Whitelist per source (province allowlists, Aga's own whitelist)
 - Audit log
 
 **Who touches Divan:**
@@ -348,7 +389,7 @@ orchestrator -- components report state to it, others read from it.
 | Component | Reads | Writes |
 |-----------|-------|--------|
 | Vizier | -- | Province registry (creates/updates status) |
-| Sentinel | Province registry, grants, audit | Grants, blacklist, audit |
+| Aga | Province registry, grants, audit | Grants, blacklist, audit |
 | Janissary | Grant table, blacklist, whitelists | Audit log |
 | Web dashboard | Everything | Nothing (read-only) |
 
@@ -360,12 +401,12 @@ Postgres if needed.
 
 ## Metrics
 
-Janissary tracks and exposes via Divan (queryable by Sentinel and web
+Janissary tracks and exposes via Divan (queryable by Aga and web
 dashboard):
 
 - Total requests per source IP (passed/blocked/appealed)
 - Active grants per province
-- Escalation count and Sentinel/Sultan response time
+- Escalation count and Aga/Sultan response time
 - Blacklist hit count (which domains triggered)
 - Appeal outcomes (approved/denied/escalated)
 - Blocked payload sizes (for tuning size gate threshold)
@@ -377,16 +418,18 @@ dashboard):
 - Traffic layers: whitelist, size gate (5KB default, outbound payloads only),
   blacklist, appeal (routed to Kashif)
 - Security MCP tool for appeals and access requests
-- Kashif content inspector for appeal triage and Sentinel ingress screening
-- Sentinel agent (non-optional), all inputs screened by Kashif
-- Transparent credential injection via grant table
-- Secret management by Sentinel (create, rotate, revoke)
+- Kashif content inspector for appeal triage and Aga ingress screening
+- Aga agent (non-optional), all inputs screened by Kashif
+- Transparent credential injection via grant table (lease-bound values)
+- Secret management by Aga via OpenBao (create, rotate, revoke,
+  lease renewal). OpenBao deployed as single local binary, bound to
+  127.0.0.1, manual unseal at boot.
 - Grant lifecycle tied to province lifecycle via Divan
 - Divan shared state store with API
 - Web dashboard (read-only realm status for Sultan)
 - Audit logging and metrics
-- All alerts contextualized by Sentinel before reaching Sultan
-- Sentinel's own traffic constrained to whitelist-only, fetched content
+- All alerts contextualized by Aga before reaching Sultan
+- Aga's own traffic constrained to whitelist-only, fetched content
   inspected by Kashif
 - Janissary has no outbound access of its own, no LLM
 - All components fail closed

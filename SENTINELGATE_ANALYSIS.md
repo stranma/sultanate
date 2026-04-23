@@ -3,7 +3,7 @@
 ## Context
 
 This analysis maps [SentinelGate](https://github.com/Sentinel-Gate/Sentinelgate)
-capabilities to Sultanate's security architecture (Janissary + Kashif + Sentinel)
+capabilities to Sultanate's security architecture (Janissary + Kashif + Aga)
 to determine what SentinelGate could replace, complement, or accelerate.
 
 ## Architecture Comparison
@@ -32,7 +32,7 @@ Agent Request
 ### What Sultanate's security layer is
 
 A network-level egress proxy (Janissary) + content inspector (Kashif) +
-security advisor agent (Sentinel) + shared state store (Divan):
+security advisor agent (Aga) + shared state store (Divan):
 
 ```
 Province Container
@@ -40,7 +40,7 @@ Province Container
      -> Layer 1: Whitelist (pass silently)
      -> Layer 2: Size gate (block large outbound payloads)
      -> Layer 3: Blacklist (block known bad)
-     -> Layer 4: Appeal -> Kashif (LLM triage) -> Sentinel -> Sultan
+     -> Layer 4: Appeal -> Kashif (LLM triage) -> Aga -> Sultan
   -> Credential injection at proxy (grant table from Divan)
   -> Audit trail to Divan
 ```
@@ -54,7 +54,7 @@ Province Container
 | **Protocol awareness** | Understands tool names, schemas, arguments | Sees HTTP requests (URL, headers, payload size) |
 | **Credential handling** | Scans for leaked secrets in args | Injects secrets transparently (agent never sees them) |
 | **Content inspection** | Regex-based PII/secret patterns | LLM-based paranoid triage (Kashif) |
-| **Intelligence layer** | CEL policies + session tracking | Sentinel agent (LLM, operator-facing) |
+| **Intelligence layer** | CEL policies + session tracking | Aga agent (LLM, operator-facing) |
 | **State store** | In-memory + state.json file | Divan (SQLite + HTTP API, shared across all components) |
 | **Scope** | Tool calls only | All outbound HTTP/HTTPS traffic |
 
@@ -126,7 +126,7 @@ rule authoring and evaluation could use SentinelGate's engine.
 
 #### 3. Audit System -- COMPLEMENTARY
 
-Sultanate: audit log in Divan (SQLite), queryable by Sentinel, shown on dashboard.
+Sultanate: audit log in Divan (SQLite), queryable by Aga, shown on dashboard.
 
 SentinelGate: ECDSA P-256 signed audit records with per-record cryptographic
 signatures. Records include tool name, arguments (redacted), decision, latency,
@@ -155,7 +155,7 @@ express. Example: "province read 50 files then tried to POST to an external
 URL" requires cross-request correlation.
 
 **Verdict:** Adopt session tracking for province-level behavioral analysis.
-Feed session metrics into Sentinel's alert contextualization.
+Feed session metrics into Aga's alert contextualization.
 
 #### 5. RBAC and Identity -- REUSABLE
 
@@ -184,10 +184,10 @@ security property that application-level controls cannot provide.
 **Janissary remains essential.** Sandcat (mitmproxy + WireGuard) is still the
 right foundation for the network layer.
 
-#### 2. Sentinel (Security Advisor Agent) -- CANNOT REPLACE
+#### 2. Aga (Security Advisor Agent) -- CANNOT REPLACE
 
-Sentinel is an LLM agent that:
-- Manages secrets (create, rotate, revoke via Infisical)
+Aga is an LLM agent that:
+- Manages secrets (create, rotate, revoke via OpenBao)
 - Contextualizes alerts for Sultan ("Province B tried to push to a new repo,
   here's why this might be legitimate or suspicious")
 - Curates blacklists based on observed patterns
@@ -197,12 +197,12 @@ Sentinel is an LLM agent that:
 SentinelGate has no LLM, no secret management, no operator-facing intelligence.
 Its policies are static rules, not contextual judgments.
 
-**Sentinel remains essential.**
+**Aga remains essential.**
 
 #### 3. Divan (Shared State) -- CANNOT REPLACE
 
 SentinelGate uses in-memory stores with optional file persistence. Sultanate
-needs a shared state store accessible to Vizier, Janissary, Sentinel, Kashif,
+needs a shared state store accessible to Vizier, Janissary, Aga, Kashif,
 and the web dashboard. Different access patterns, different writers.
 
 **Divan remains essential.**
@@ -239,7 +239,7 @@ Province Container
         +-- Janissary (network egress proxy, Sandcat-based)
               -> Whitelist/blacklist/size-gate (from Divan)
               -> Credential injection (grant table)
-              -> Blocked? -> Kashif (LLM triage) -> Sentinel -> Sultan
+              -> Blocked? -> Kashif (LLM triage) -> Aga -> Sultan
               -> Audit to Divan
 ```
 
@@ -257,14 +257,14 @@ session history) that the network layer cannot see.
 ### Data flow between layers
 
 1. **Vizier** creates province, writes to Divan (province ID, IP, berat)
-2. **Sentinel** reads new province, provisions credentials to Divan grant table
+2. **Aga** reads new province, provisions credentials to Divan grant table
 3. **SentinelGate** starts with province's berat-derived policy (CEL rules
    generated from berat security policy)
 4. **Pasha** calls MCP tools -> SentinelGate evaluates, scans, audits
 5. **MCP tool makes HTTP request** -> Janissary evaluates at network level
-6. **SentinelGate session metrics** feed into Divan -> Sentinel uses for
+6. **SentinelGate session metrics** feed into Divan -> Aga uses for
    alert contextualization
-7. **SentinelGate detects anomaly** -> writes alert to Divan -> Sentinel
+7. **SentinelGate detects anomaly** -> writes alert to Divan -> Aga
    contextualizes -> Sultan
 
 ### Berat-to-CEL compilation
@@ -317,12 +317,12 @@ province creation time.
 3. **Feed SentinelGate audit to Divan** via a lightweight adapter (SentinelGate
    writes to file/stdout, a sidecar ships to Divan HTTP API).
 4. **Keep Janissary/Sandcat as the network layer.** No change to egress proxy.
-5. **Keep Kashif and Sentinel.** SentinelGate's regex scanning is Layer 0;
+5. **Keep Kashif and Aga.** SentinelGate's regex scanning is Layer 0;
    Kashif's LLM screening is Layer 1 for appeals and escalations.
 
 ### Phase 2: Deeper integration
 
-6. **Session metrics -> Sentinel context.** Sentinel reads SentinelGate's
+6. **Session metrics -> Aga context.** Aga reads SentinelGate's
    session data from Divan to enrich alerts ("Province A has made 200 tool
    calls in 5 minutes, 80% writes, targeting files matching `*.env`").
 7. **Signed audit records in Divan.** Adopt SentinelGate's ECDSA signing
@@ -347,7 +347,7 @@ province creation time.
 |---------------------|-------------------|--------|
 | **Janissary** (egress proxy) | Cannot replace (network vs app layer) | Keep Sandcat. SentinelGate is complementary layer above. |
 | **Kashif** (content inspector) | Partial overlap (regex vs LLM) | Use SentinelGate as fast first-pass scanner. Keep Kashif for LLM triage. |
-| **Sentinel** (security advisor) | No overlap (no LLM, no secret mgmt) | Keep. Feed SentinelGate session data into Sentinel's context. |
+| **Aga** (security advisor) | No overlap (no LLM, no secret mgmt) | Keep. Feed SentinelGate session data into Aga's context. |
 | **Divan** (shared state) | No overlap (in-memory vs shared store) | Keep. SentinelGate writes audit to Divan. |
 | **Policy engine** | Strong fit (CEL >> whitelist tables) | Adopt CEL as universal policy language across both layers. |
 | **Session tracking** | New capability | Adopt. Critical for exfiltration detection. |

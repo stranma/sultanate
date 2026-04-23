@@ -43,7 +43,7 @@ When Vizier (deployment orchestrator) creates a province from hermes-firman + a 
    --> Pasha (agent inside province) is now reachable by Sultan
 
 5. Vizier writes province state to Divan (shared state store)
-   --> Sentinel (security advisor) reads new province, provisions grants per berat
+   --> Aga (security advisor) reads new province, provisions grants per berat
    --> Vizier updates status to running
 ```
 
@@ -79,7 +79,7 @@ After workspace bootstrap and berat application, Vizier starts Hermes:
 1. `hermes gateway` launched as the container's main process
 2. Hermes reads `~/.hermes/config.yaml` (written by berat application)
 3. Hermes loads `AGENTS.md` from workspace root (written by berat application)
-4. Hermes connects to Telegram (bot token from berat/Sentinel provisioning)
+4. Hermes connects to Telegram (bot token from berat/Aga provisioning)
 
 The firman defines HOW Hermes starts. WHAT it's configured with comes from
 the berat.
@@ -89,7 +89,7 @@ the berat.
 Each province gets its own Telegram bot for Sultan (human operator)
 communication:
 
-- Bot token provisioned by Sentinel from a pool or created on demand
+- Bot token provisioned by Aga from a pool or created on demand
 - `TELEGRAM_ALLOWED_USERS` set to Sultan's Telegram user ID
 - Hermes gateway started with Telegram channel enabled
 - Sultan sees the province as a separate Telegram thread

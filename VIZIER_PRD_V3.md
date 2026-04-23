@@ -16,7 +16,7 @@ Vizier is reactive -- it acts on Sultan's commands and agent events. It does
 not invent work on its own.
 
 Vizier does not handle security (Janissary's job), content inspection
-(Kashif's job), or secret management (Sentinel's job). It writes province
+(Kashif's job), or secret management (Aga's job). It writes province
 state to Divan and trusts the security perimeter to enforce policy.
 
 Phase 1 is Hermes-native. Phase 2 adds OpenClaw support.
@@ -33,7 +33,7 @@ Phase 1 is Hermes-native. Phase 2 adds OpenClaw support.
 **Vizier does NOT provide:**
 - Network security or egress control (Janissary's job)
 - Content inspection (Kashif's job)
-- Secret management or credential injection (Sentinel's job)
+- Secret management or credential injection (Aga's job)
 - Agent runtime (Hermes or other runtime's job)
 - Task decomposition or work planning (Pasha's job)
 
@@ -44,8 +44,8 @@ Phase 1 is Hermes-native. Phase 2 adds OpenClaw support.
 - **Vizier is not root.** It runs as a dedicated user (`vizier`) with Docker
   group access. It can create and manage containers but cannot modify network
   rules, access secrets, or read audit state directly.
-- **Vizier does not call Janissary, Kashif, or Sentinel.** All coordination
-  happens through Divan. Vizier writes province state; Sentinel reads it and
+- **Vizier does not call Janissary, Kashif, or Aga.** All coordination
+  happens through Divan. Vizier writes province state; Aga reads it and
   provisions security.
 - **Provinces are long-lived.** A province may handle multiple tasks over
   time. Province lifecycle state is not task state.
@@ -65,7 +65,7 @@ Province state is infrastructure state, not task state:
   required
 - **destroying** -- Vizier is tearing down the province and cleaning up
 
-Vizier writes every state change to Divan. Sentinel watches Divan for new
+Vizier writes every state change to Divan. Aga watches Divan for new
 provinces and provisions security (grants, whitelist) accordingly.
 
 ## Province Creation Flow
@@ -80,7 +80,7 @@ provinces and provisions security (grants, whitelist) accordingly.
    --> agent runtime started per firman spec
 4. Vizier writes to Divan:
    --> province ID, container IP, status=creating, firman used
-5. Sentinel reads new province from Divan:
+5. Aga reads new province from Divan:
    --> provisions default grants from firman
    --> sets up whitelist from firman defaults
 6. Vizier updates Divan: status=running
@@ -119,7 +119,7 @@ and reports it to Sultan on request.
 **Sultan can ask:**
 - "What is running right now?" -- Vizier lists active provinces with status
 - "Stop province X" -- Vizier stops the province, updates Divan
-- "Kill province X" -- Vizier destroys the province, updates Divan (Sentinel
+- "Kill province X" -- Vizier destroys the province, updates Divan (Aga
   revokes grants on seeing the state change)
 - "Restart province X" -- Vizier restarts a stopped province
 
