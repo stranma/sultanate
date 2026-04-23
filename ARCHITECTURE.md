@@ -158,11 +158,100 @@ Province      Janissary     Kashif         Divan        Vizier     Sultan
    |<-- 200 -----|             |             |            |          |
 ```
 
-If Kashif returns **obvious-safe**, appeal is auto-approved in Divan.
-If **obvious-bad**, appeal is auto-denied. If **unclear**, appeal flows
-to Aga (via Divan poll) and then to Sultan as needed. Kashif fails
-closed: if its LLM is down or times out, the appeal is held for Aga +
-Sultan review (never auto-approved).
+### Appeal flow -- what happens in what order
+
+Setup: province `prov-a1b2c3` wants to POST source code to a non-
+whitelisted, non-blacklisted service.
+
+```
+T+0.0s   Pasha (inside province):
+         POST https://<new-service>/upload  (500 bytes)
+
+T+0.1s   Janissary: source_ip 10.13.13.5 -> rule 4 (non-whitelist
+         write) -> BLOCK. Returns 403 + appeal_url to Pasha.
+
+T+0.2s   Pasha: calls appeal_request(url, method, payload,
+         justification) via the Janissary security MCP.
+
+T+0.3s   Janissary does two writes in parallel:
+         (a) POST /appeals to Divan -> creates appeal-m1n2o3 with
+             status=pending, kashif_verdict=null
+         (b) POST /screen/appeal to Kashif -> payload + justification
+         Returns 202 Accepted to Pasha.
+
+T+0.4s   Kashif Layer 1 (LLM Guard regex, ~10 ms) -> pass
+T+0.6s   Kashif Layer 2 (Prompt Guard 2 22M, ~200 ms) -> pass
+T+2.0s   Kashif Layer 3 (Llama Guard 3 1B Q4, ~1-2 s) -> verdict
+```
+
+**Three possible outcomes at T+2.0s:**
+
+```
+ CASE A: Kashif = "allow" (obvious safe)
+---------------------------------------------------
+T+2.1s   Kashif: PATCH /appeals/m1n2o3/kashif_verdict
+                  { kashif_verdict: "allow", ... }
+T+2.2s   Divan atomically transitions:
+                  status         := "approved"
+                  decision       := "one-time"
+                  resolved_at    := now
+         Audit entry written with severity=info.
+         Sultan NOT notified (obvious safe). Aga NOT notified.
+T+next   Pasha retries -> Janissary sees approved in 5-minute
+         window -> PASS.
+
+ CASE B: Kashif = "block" (obvious bad)
+---------------------------------------------------
+T+2.1s   Kashif: PATCH with kashif_verdict="block".
+T+2.2s   Divan atomically transitions:
+                  status         := "denied"
+                  resolved_at    := now
+         Audit entry written with severity=ALERT.
+         Decision is final, but...
+T+5s     Vizier polls /audit?severity=alert&since=<last>
+         -> sends INFORMATIONAL Telegram to Sultan:
+           "Prov backend-refactor appeal AUTO-BLOCKED by Kashif.
+            Target: <url>. Justification: '<text>'.
+            Kashif notes: <...>. Decision is final; review if
+            pattern repeats."
+T+5s     Aga polls the same audit feed. Tracks a counter per
+         province of Kashif blocks; if threshold exceeded,
+         alerts Sultan with a recommendation ("Prov backend-
+         refactor has 3 Kashif blocks in 10 min. Consider
+         destroying the province.").
+T+next   Pasha retries -> still rule-4-blocked, no approval
+         record -> 403 again.
+
+ CASE C: Kashif = "escalate" (unsure) or Kashif TIMEOUT
+---------------------------------------------------
+T+2.1s   Kashif: PATCH kashif_verdict="escalate" (or Janissary
+         itself writes "escalate" after its configured timeout).
+T+2.2s   Divan leaves status=pending.
+T+5-10s  Vizier polls /appeals?status=pending&kashif_verdict=escalate
+         -> sends ACTIONABLE Telegram to Sultan:
+           "Prov backend-refactor appeal NEEDS DECISION.
+            Target: <url>. Justification: '<text>'. Kashif:
+            escalate (notes: <...>).
+            Approve once / approve forever / deny / kill province?"
+         Aga polls same records; may add commentary to Sultan
+         ("This looks like a normal test-upload pattern" or
+          "I've seen prov-a1b2c3 hit 3 pastebin-ish domains in
+          the last hour -- suspicious").
+T+human  Sultan decides. Vizier writes decision to Divan.
+T+next   Pasha retries -> PASS or 403 per decision.
+```
+
+**Why both Sultan and Aga see Case B:** Kashif=block handles the
+request correctly, but a streak of blocks is a signal that the Pasha
+may be going off the rails. Sultan + Aga see these events so they can
+assess behaviour (add the domain to blacklist, destroy the province,
+ask Kashif to tighten screening, etc.). The goal isn't to re-decide
+Kashif's verdict -- it's to catch drift.
+
+**Why Kashif fails closed:** if Kashif's LLM is down or times out,
+Janissary writes kashif_verdict="escalate" and the appeal flows to
+Sultan exactly like Case C. Kashif never auto-approves anything in
+the degraded path.
 
 ### Kill-switch (WireGuard down)
 

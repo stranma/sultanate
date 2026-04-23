@@ -106,16 +106,37 @@ policy -- same as a sysadmin.
 
 ## Credential Model
 
-**Dangerous secrets** (GitHub tokens, API keys) -- Aga provisions via
-OpenBao (dynamic where possible), receives a lease, writes a grant record
-to Divan referencing the lease. Janissary reads grants from Divan and
-injects into request headers at the proxy level. Containers never see
-these values. When the lease expires or is revoked in OpenBao, Janissary
-treats the grant as inactive and fails closed on injection.
+**Dangerous secrets** (GitHub tokens, API keys) -- Aga stores in OpenBao
+and writes a grant record to Divan. Janissary reads grants from Divan
+and injects into request headers at the proxy level. Containers never
+see these values.
+
+Two storage modes (OpenBao engines):
+
+- **KV mode (Phase 1 default, Sultan-pasted PATs):** Aga stores the
+  token in OpenBao's key-value engine. No true OpenBao lease -- the
+  token stays valid until Aga revokes it. The grant record's
+  `openbao_lease_id` and `lease_expires_at` fields are `null`.
+  If the Pasha is idle for days, nothing happens; the token remains
+  valid. Rotation is Aga-driven (either on an explicit Sultan
+  request or on a schedule Sultan configures).
+
+- **Dynamic mode (Phase 2 path, GitHub App / DB creds / SSH CA):**
+  Aga calls a dynamic secret engine; OpenBao mints a short-lived
+  credential and issues a lease with TTL. Aga writes the lease ID
+  and expiry into the grant. Janissary checks expiry before
+  injecting (fails closed on expired). Aga renews before TTL while
+  the province is running, stops renewing on destroy, and OpenBao
+  revokes server-side at TTL -- so a missed cleanup is bounded by
+  the lease window, not by Aga's reliability.
+
+Phase 1 MVP ships KV mode. Phase 2 introduces GitHub App for repo
+access (and so dynamic-mode grants) as soon as we have an operator
+workflow for GitHub App install/rotate.
 
 **Low-risk config** (Telegram bot tokens, public endpoints) -- Vizier
-writes directly into containers. A leaked bot token lets someone chat as
-the agent, not access code.
+writes directly into containers. A leaked bot token lets someone chat
+as the agent, not access code.
 
 ## CA Certificate Lifecycle
 
@@ -243,22 +264,34 @@ host as fallback (and the dashboard via SSH tunnel).
 
 ## Appeal Flow
 
-1. Agent's write request to non-whitelisted domain -> blocked by Janissary
-2. Agent calls `appeal_request(url, method, justification)` via MCP tool
-3. Janissary forwards the full payload + justification to Kashif
-   `/screen/appeal`
-4. Kashif runs three layers (regex fast-path, classifier, LLM judge) and
-   returns allow / block / escalate within 5 s
-5. Janissary writes the appeal record to Divan, including the Kashif
-   verdict
-6. If Kashif=allow: Divan auto-transitions the appeal to approved;
-   Janissary picks it up on next poll and lets the retry through
-7. If Kashif=block: Divan auto-transitions to denied; agent never
-   retries successfully
-8. If Kashif=escalate (or Kashif unavailable): Vizier polls Divan for
-   escalated appeals, relays to Sultan via Telegram; Sultan replies
-   approve / deny / whitelist; Vizier writes decision to Divan;
-   Janissary picks up decision
+See `ARCHITECTURE.md` for the full timeline-style walkthrough. Summary:
+
+1. Agent's write request to non-whitelisted domain -> blocked by
+   Janissary.
+2. Agent calls `appeal_request(url, method, justification)` via MCP
+   tool.
+3. Janissary writes the appeal to Divan and forwards payload +
+   justification to Kashif `/screen/appeal`.
+4. Kashif returns allow / block / escalate within ~2 s. Three branches:
+
+   - **Kashif=allow** -> Divan auto-transitions appeal to approved;
+     Janissary lets the retry through on next poll. **No Sultan
+     notification** (obvious safe; audit entry only).
+   - **Kashif=block** -> Divan auto-transitions to denied; retry still
+     fails. **Both Sultan and Aga are notified** via an informational
+     Telegram message. The decision is final, but the notification
+     exists so the operator can spot drifting behaviour (3 blocks in
+     10 min -> consider destroying the province).
+   - **Kashif=escalate** (or Kashif unavailable) -> appeal stays
+     pending; **both Sultan and Aga are notified** via actionable
+     Telegram. Sultan decides approve/deny/whitelist/kill-province;
+     Aga may add context from its own audit-history view.
+
+5. Vizier is the Sultan-facing relay: it polls Divan audit and pending
+   appeals and sends the Telegram messages. Aga polls the same records
+   independently and contributes its own analysis to the Sultan chat.
+6. All Kashif verdicts (including auto-approved) are written to
+   `/audit`. Sultan can scan the dashboard's audit page at any time.
 
 ## Components
 

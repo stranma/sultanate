@@ -408,21 +408,36 @@ PATCH /appeals/{id}/kashif_verdict
 }
 ```
 
-Kashif role only.
+Kashif role only (Janissary may also write `escalate` if Kashif
+times out).
 
 `kashif_verdict` enum: `allow`, `block`, `escalate`.
 
 - `allow`: Divan automatically transitions the appeal to
   `status: approved, decision: one-time` (Janissary picks it up
-  on next poll).
-- `block`: Divan automatically transitions to
-  `status: denied`.
-- `escalate`: appeal stays at `status: pending` for Vizier to relay
-  to Sultan.
+  on next poll). Audit severity = `info`. Sultan and Aga are not
+  notified.
+- `block`: Divan automatically transitions to `status: denied`.
+  Audit severity = `alert`. Both Sultan and Aga are notified
+  (informational) so they can watch for patterns of Pasha drift.
+- `escalate`: appeal stays at `status: pending`. Audit severity =
+  `alert`. Both Sultan (actionable) and Aga (advisory) are
+  notified. Sultan decides; Aga may add context.
 
 If Kashif never writes a verdict (its LLM is down or times out),
-Janissary treats the appeal as `escalate` after a timeout configured
-in Janissary's `config.yaml`.
+Janissary writes `kashif_verdict: "escalate"` after a timeout
+configured in Janissary's `config.yaml` and tags the audit entry
+with an additional `kashif_timeout: true` flag.
+
+**Vizier polls Divan for Sultan notifications:**
+- `GET /appeals?status=pending&kashif_verdict=escalate` -> actionable
+  Telegram ("NEEDS DECISION").
+- `GET /audit?severity=alert&component=kashif&since=<last>` ->
+  informational Telegram for Kashif-block events.
+
+**Aga polls the same endpoints** to maintain behavioural context for
+each province. Counter rules (e.g., "3 Kashif blocks in 10 min")
+trigger Aga-authored Telegram messages with recommendations.
 
 ### Resolve Appeal (Sultan)
 
@@ -553,6 +568,7 @@ POST /audit
 ```json
 {
   "component": "janissary",
+  "severity": "info",
   "province_id": "prov-a1b2c3",
   "source_ip": "10.13.13.5",
   "action": "http_request",
@@ -570,16 +586,29 @@ POST /audit
 Any writer role (`janissary`, `aga`, `kashif`, `vizier`) can append.
 `id` and `created_at` are auto-generated. Returns `201`.
 
+`severity` enum: `info`, `alert`, `error`.
+
+- `info`: routine operation (allowed request, Kashif allow, grant
+  injected). Not polled for notifications.
+- `alert`: requires Sultan + Aga awareness (Kashif block, Kashif
+  escalate, repeated blacklist hits, lease-expired skips, port
+  request approvals). Vizier and Aga poll for these.
+- `error`: component-level malfunction (Kashif timeout, OpenBao
+  unreachable, Divan write conflict). Vizier escalates to Sultan.
+
 ### List Audit Entries
 
 ```
 GET /audit
 GET /audit?component=kashif
 GET /audit?province_id=prov-a1b2c3
+GET /audit?severity=alert
 GET /audit?since=2026-04-23T00:00:00Z&limit=200
 ```
 
-`limit` defaults to 100, max 1000. Dashboard role only.
+`limit` defaults to 100, max 1000. Dashboard role reads all;
+`vizier` and `aga` roles can read `severity=alert|error` for
+notification polling.
 
 ### Audit Entry Object
 
@@ -587,6 +616,7 @@ GET /audit?since=2026-04-23T00:00:00Z&limit=200
 {
   "id": "audit-u1v2w3",
   "component": "janissary",
+  "severity": "info",
   "province_id": "prov-a1b2c3",
   "source_ip": "10.13.13.5",
   "action": "http_request",
@@ -599,6 +629,7 @@ GET /audit?since=2026-04-23T00:00:00Z&limit=200
 
 `component` enum: `janissary`, `kashif`, `aga`, `vizier`.
 `verdict` enum: `allow`, `block`, `escalate`, `error`.
+`severity` enum: `info`, `alert`, `error`.
 
 ---
 
@@ -740,6 +771,7 @@ CREATE INDEX idx_port_requests_status ON port_requests(status);
 CREATE TABLE audit (
     id TEXT PRIMARY KEY,
     component TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
     province_id TEXT,
     source_ip TEXT,
     action TEXT NOT NULL,
@@ -751,6 +783,7 @@ CREATE TABLE audit (
 CREATE INDEX idx_audit_created_at ON audit(created_at DESC);
 CREATE INDEX idx_audit_component ON audit(component);
 CREATE INDEX idx_audit_province_id ON audit(province_id);
+CREATE INDEX idx_audit_severity ON audit(severity);
 
 CREATE TABLE api_keys (
     key_hash TEXT PRIMARY KEY,
