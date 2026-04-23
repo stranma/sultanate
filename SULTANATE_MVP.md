@@ -106,33 +106,44 @@ policy -- same as a sysadmin.
 
 ## Credential Model
 
-**Dangerous secrets** (GitHub tokens, API keys) -- Aga stores in OpenBao
-and writes a grant record to Divan. Janissary reads grants from Divan
-and injects into request headers at the proxy level. Containers never
-see these values.
+**Dangerous secrets** (GitHub tokens, API keys) -- Aga creates them,
+stores them in OpenBao, and writes a grant record to Divan. Janissary
+reads grants from Divan and injects into request headers at the proxy
+level. Containers never see these values.
 
-Two storage modes (OpenBao engines):
+**Sultan does not paste tokens.** Sultan's role is one-time setup:
+install a GitHub App on the repos Sultanate should manage, and hand
+the App private key to Aga. From then on, Aga mints short-lived
+installation tokens per-province on demand. (For services without
+automation, Sultan can still paste tokens in Telegram -- see KV
+fallback below -- but GitHub is fully automated.)
 
-- **KV mode (Phase 1 default, Sultan-pasted PATs):** Aga stores the
-  token in OpenBao's key-value engine. No true OpenBao lease -- the
-  token stays valid until Aga revokes it. The grant record's
-  `openbao_lease_id` and `lease_expires_at` fields are `null`.
-  If the Pasha is idle for days, nothing happens; the token remains
-  valid. Rotation is Aga-driven (either on an explicit Sultan
-  request or on a schedule Sultan configures).
+### Grant modes
 
-- **Dynamic mode (Phase 2 path, GitHub App / DB creds / SSH CA):**
-  Aga calls a dynamic secret engine; OpenBao mints a short-lived
-  credential and issues a lease with TTL. Aga writes the lease ID
-  and expiry into the grant. Janissary checks expiry before
-  injecting (fails closed on expired). Aga renews before TTL while
-  the province is running, stops renewing on destroy, and OpenBao
-  revokes server-side at TTL -- so a missed cleanup is bounded by
-  the lease window, not by Aga's reliability.
+- **Dynamic mode (Phase 1 default, GitHub App):**
+  Aga holds the GitHub App private key in OpenBao KV. When a province
+  is created (or needs rotation), Aga mints a GitHub App installation
+  access token scoped to the province's repo, with GitHub's
+  hard-capped TTL of 1 hour. Aga writes the grant to Divan with an
+  Aga-generated lease ID (`github-app:prov-XXXXXX`) and the
+  `lease_expires_at` returned by GitHub. A background renewal loop in
+  Aga refreshes every ~30 min while the province is running, stops
+  refreshing on destroy, and GitHub kills the token within 1 hour
+  naturally. Janissary checks expiry before injecting and fails
+  closed on expired (audit entry, `severity=alert`).
 
-Phase 1 MVP ships KV mode. Phase 2 introduces GitHub App for repo
-access (and so dynamic-mode grants) as soon as we have an operator
-workflow for GitHub App install/rotate.
+- **KV fallback (edge cases):**
+  For services that do not have a dynamic mint path and where Sultan
+  manually pastes a token in Telegram (e.g., a third-party API Aga
+  cannot automate against), Aga stores the token in OpenBao KV. The
+  grant's `openbao_lease_id` and `lease_expires_at` are `null`;
+  Janissary injects unconditionally; the token lives until Sultan
+  tells Aga to revoke. This is a fallback, not the default.
+
+Phase 2 may add a dedicated OpenBao secret engine plugin for GitHub
+Apps (community `vault-plugin-secrets-github` may work directly);
+for MVP the minting logic lives in Aga itself, keyed off the App
+private key held in OpenBao KV.
 
 **Low-risk config** (Telegram bot tokens, public endpoints) -- Vizier
 writes directly into containers. A leaked bot token lets someone chat
@@ -188,13 +199,55 @@ substitution. See `OPENCLAW_CODING_BERAT_MVP_PRD.md`.
 
 ## GitHub Token Strategy
 
-Sultan pre-creates GitHub PATs (fine-grained, scoped per repo), or Aga uses
-a GitHub App to mint short-lived installation tokens via OpenBao's GitHub
-plugin (if configured). Sultan gives PATs to Aga via Telegram: "Store this
-token for repo X." Aga stores in OpenBao and writes the grant (with lease
-ID) to Divan. Aga does not create long-lived tokens programmatically --
-it stores and manages tokens that Sultan provides, or requests short-lived
-tokens from GitHub App flow.
+**Sultan's one-time setup (outside Sultanate):**
+
+1. Create a Sultanate GitHub App in Sultan's GitHub account/org.
+2. Configure the App with minimal repo permissions (`contents:write`,
+   `pull_requests:write`, `metadata:read`; add more per-repo as
+   needed later via the App settings UI).
+3. Install the App on the repos Sultanate should manage. New repos
+   get added to the installation later by Sultan in the GitHub UI;
+   no Sultanate-side action required at install time.
+4. Download the App private key (PEM) once; hand it to Aga by
+   dropping the file into `/opt/sultanate/bootstrap/github-app.pem`
+   during first boot (deploy-script prompts for it), OR send it
+   via Telegram once for Aga to persist into OpenBao KV.
+
+**Per-province provisioning (automatic, Aga-driven):**
+
+1. Vizier creates province `prov-a1b2c3` for repo `stranma/EFM`.
+   Vizier writes province record to Divan.
+2. Aga sees the new province. Reads the GitHub App private key from
+   OpenBao KV (`kv/github-app/private-key`).
+3. Aga generates a JWT signed with the App private key, calls
+   `POST /app/installations/{installation_id}/access_tokens` scoped
+   to `stranma/EFM`. GitHub returns a token with 1-hour TTL.
+4. Aga writes grant to Divan:
+   ```json
+   {
+     "province_id": "prov-a1b2c3",
+     "source_ip": "10.13.13.5",
+     "match":  { "domain": "api.github.com" },
+     "inject": { "header": "Authorization", "value": "<token>" },
+     "openbao_lease_id":  "github-app:prov-a1b2c3",
+     "lease_expires_at":  "<token-expiry from GitHub>"
+   }
+   ```
+5. Aga's renewal loop (runs every ~15 min) refreshes any grant
+   where `lease_expires_at < now + 20 min`, updating `inject.value`
+   and `lease_expires_at` in place via `PATCH /grants/{id}`. Stops
+   refreshing when the province status becomes `stopped` or
+   `destroying`.
+
+**Sultan's day-to-day interaction with GitHub credentials:** none.
+Aga handles minting, renewal, and revocation silently. Sultan sees
+grant entries on the dashboard but never pastes or handles tokens.
+
+**Non-GitHub services** (if a Pasha needs cloud API credentials,
+third-party service tokens) fall back to KV mode: Sultan provides the
+token once via Telegram, Aga stores it in OpenBao KV, grant has no
+lease, lives until Sultan says to revoke. Phase 2 expands dynamic
+minting to more services as appropriate.
 
 ## Runtime
 
