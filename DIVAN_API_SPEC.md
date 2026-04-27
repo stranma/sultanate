@@ -9,9 +9,12 @@
 SQLite database + Python HTTP API (FastAPI). The JSON API listens on
 `0.0.0.0:8600` (reachable from other Sultanate containers on the
 internal Docker network). A server-rendered Jinja2/HTMX dashboard lives
-in the same process on `127.0.0.1:8601` (host-localhost only; Sultan
-reaches it via SSH tunnel). All component communication is JSON over
-HTTP. No TLS (trusted local network only).
+in the same process on the host's Tailscale interface IP at port `8601`
+(operator deploys Tailscale; Sultan reaches the dashboard from any
+device on the tailnet). Fallback path for non-Tailscale environments:
+bind to `127.0.0.1:8601` and SSH-tunnel. All component communication
+is JSON over HTTP. No TLS (trusted local network / Tailscale tailnet
+only).
 
 ## Authentication
 
@@ -804,7 +807,7 @@ Divan reads from environment variables:
 |----------|---------|-------------|
 | `DIVAN_API_HOST` | `0.0.0.0` | JSON API listen address (internal Docker network) |
 | `DIVAN_API_PORT` | `8600` | JSON API listen port |
-| `DIVAN_DASHBOARD_HOST` | `127.0.0.1` | Dashboard listen address (host-localhost only) |
+| `DIVAN_DASHBOARD_HOST` | (operator-supplied) | Dashboard listen address. Recommended: the host's Tailscale interface IP (e.g., `100.x.y.z`) so Sultan can reach the dashboard from any device on the tailnet. Fallback for environments without Tailscale: `127.0.0.1` plus SSH tunnel. **Never bind to `0.0.0.0`.** |
 | `DIVAN_DASHBOARD_PORT` | `8601` | Dashboard listen port |
 | `DIVAN_DB` | `/opt/sultanate/divan.db` | SQLite database path |
 | `DIVAN_ENV_FILE` | `/opt/sultanate/divan.env` | Component API keys file |

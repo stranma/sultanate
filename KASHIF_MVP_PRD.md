@@ -3,7 +3,9 @@
 > For shared glossary and architecture see [SULTANATE_MVP.md](SULTANATE_MVP.md).
 > For the proxy sibling see [JANISSARY_MVP_PRD.md](JANISSARY_MVP_PRD.md).
 > For shared state contract see [DIVAN_API_SPEC.md](DIVAN_API_SPEC.md).
-> Working notes that preceded this PRD: [KASHIF_NOTES.md](KASHIF_NOTES.md).
+> For the timeline-style flow diagrams (appeal flow, mid-task credential
+> request flow) where Kashif sits in the middle of the screening step,
+> see [ARCHITECTURE.md](ARCHITECTURE.md) §2.
 
 ## What Kashif Is
 

@@ -73,11 +73,32 @@ not to replace the command path.
 
 **Auth + network:**
 
-- HTTP basic auth (single user: Sultan, password from OpenBao at boot)
-- Listener bound to `127.0.0.1:8601`
-- Sultan reaches the dashboard via SSH tunnel
-  (`ssh -L 8601:127.0.0.1:8601 sultan@host`, then
-  `http://localhost:8601` in browser)
+Primary access: **Tailscale**. The operator installs Tailscale on the
+host and on the phone (or laptop). The dashboard listener binds to the
+host's Tailscale interface IP (e.g., `100.x.y.z:8601`). Sultan reaches
+the dashboard from any device on the same Tailscale tailnet by opening
+`http://100.x.y.z:8601` -- works seamlessly from a phone, no SSH
+client needed.
+
+- HTTP basic auth retained as a second factor (single user: Sultan,
+  password generated at deploy time and stored in
+  `/opt/sultanate/dashboard.env`).
+- Tailscale's identity-based ACL is the first factor: only devices on
+  Sultan's tailnet can route to the listener at all.
+- The dashboard listener is **never bound to `0.0.0.0`** -- only to
+  the Tailscale interface (or `127.0.0.1` in the fallback path below).
+
+**Fallback (no-Tailscale environments):**
+
+If Tailscale is not viable, bind the dashboard to `127.0.0.1:8601` and
+SSH-tunnel from the operator's machine
+(`ssh -L 8601:127.0.0.1:8601 sultan@host`, then `http://localhost:8601`).
+Mobile UX is poor; this path is for development and recovery, not
+day-to-day use.
+
+Tailscale itself is an operator-installed dependency, not bundled with
+Sultanate. The deploy script reads the Tailscale interface IP at boot
+and writes the appropriate `DIVAN_DASHBOARD_HOST` value.
 
 ## Implementation Stack
 

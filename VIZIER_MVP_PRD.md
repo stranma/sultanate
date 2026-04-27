@@ -32,7 +32,8 @@ top.
 |----------|-------|
 | **User** | `vizier` (dedicated, non-root) |
 | **Groups** | Docker group |
-| **Network** | Through Janissary (WireGuard transparent proxy) |
+| **Network -- egress** | Through Janissary (WireGuard transparent proxy), same rules as a Pasha |
+| **Network -- ingress** | None. All Sultan ↔ Vizier comms via Telegram polling (outbound only). The OpenClaw gateway HTTP endpoint on port 18789 is bound to `127.0.0.1` inside the Vizier container -- never reachable from outside. |
 | **Can** | Create/manage containers, `docker exec` into provinces, write to Divan (provinces, berat port requests, whitelist defaults, appeal decisions), read Divan (appeals, audit) |
 | **Cannot** | Read grant values, access OpenBao, modify network rules, open ports, read secrets |
 
@@ -40,6 +41,46 @@ Vizier has access to the Janissary security HTTP API (appeal /
 request_access). If Vizier itself hits a blocked request (egress from the
 Vizier container), it can appeal the same way a Pasha would -- the
 appeal is screened by Kashif first.
+
+## Vizier Egress
+
+Vizier needs egress for two purposes:
+
+1. **Telegram polling** -- outbound calls to `api.telegram.org` to
+   long-poll for Sultan's messages. Always allowed (whitelisted in
+   Vizier's Divan whitelist).
+2. **Documentation lookups** -- when Sultan asks Vizier to set up a
+   province for a new repo or framework, Vizier may need to read docs
+   sites, package registries, or Q&A sites to plan a sensible
+   firman/berat parameterisation.
+
+Vizier's whitelist key in Divan is `"vizier"` (parallel to province
+IDs as keys). It ships with these defaults:
+
+| Domain | Reason |
+|--------|--------|
+| `api.telegram.org` | Telegram polling |
+| `docs.python.org` | Python documentation |
+| `docs.openclaw.ai` | OpenClaw runtime documentation |
+| `github.com`, `api.github.com` | Repo discovery, README lookup |
+| `pypi.org`, `files.pythonhosted.org` | Python package metadata |
+| `registry.npmjs.org` | Node package metadata |
+| `cdn.jsdelivr.net` | Common CDN for npm |
+| `docs.docker.com` | Docker reference |
+| `stackoverflow.com` | Developer Q&A |
+
+These cover Vizier's day-to-day reads. Janissary's read-only
+passthrough rule (Rule 3 -- non-whitelist GET/HEAD = pass) covers
+unlisted documentation sites without an explicit whitelist entry, so
+Vizier can browse generally even when a domain isn't listed.
+
+Sultan can extend Vizier's whitelist via Aga (e.g., add a new search
+engine or vendor docs site) with the same Telegram instruction flow
+used for province whitelist edits.
+
+Vizier never needs **write** access (POST/PUT/PATCH/DELETE) to
+non-whitelisted domains. If a write is genuinely needed, Vizier appeals
+the same way a Pasha would -- through the Janissary security MCP.
 
 ## CLI
 

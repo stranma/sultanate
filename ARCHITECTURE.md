@@ -253,6 +253,97 @@ Janissary writes kashif_verdict="escalate" and the appeal flows to
 Sultan exactly like Case C. Kashif never auto-approves anything in
 the degraded path.
 
+### Mid-task credential request flow
+
+Distinct from the appeal flow. An appeal is "this specific request
+was blocked, let me through this once". A credential request is
+"please provision a new long-lived credential so I can access service
+X going forward." Examples: a Pasha needs API access to a new SaaS
+service it didn't have at province creation; the GitHub App
+installation needs to grow to cover a new repo.
+
+```
+Pasha             Janissary    Kashif        Divan      Vizier      Aga         Sultan
+  |                  |            |             |           |          |            |
+  |-- request_access(service, scope, justification) MCP call           |            |
+  |--POST /api/req->|            |             |           |          |            |
+  |                 |--screen/ingress(text)-->|             |          |            |
+  |                 |            |--regex     |             |          |            |
+  |                 |            |--PromptGuard               |        |            |
+  |                 |            |--LlamaGuard                |        |            |
+  |                 |<--verdict--|             |           |          |            |
+  |                 |--POST /access_request -->|           |          |            |
+  |<-- pending -----|            |             |           |          |            |
+```
+
+**Three outcomes at the verdict step (~T+2.0s):**
+
+```
+ CASE A: Kashif = "allow"
+---------------------------------------------------
+T+2.2s   Divan stores the access_request with status=pending,
+         kashif_verdict=allow. Audit severity = info.
+T+5-10s  Vizier polls /access_requests?status=pending and sends
+         actionable Telegram to Sultan:
+           "Prov backend-refactor wants access to api.acme.com
+            (write scope). Justification: '<text>'.
+            Kashif: allow (notes: '...').
+            Approve / deny?"
+T+5-10s  Aga also polls. Adds advisory context to Sultan via its
+         own Telegram channel: "I've seen prov-a1b2c3 use this
+         class of API before in test mode -- this is consistent
+         with the task you assigned."
+T+human  Sultan replies "approve" to Vizier.
+         Vizier writes status=approved to Divan.
+T+poll   Aga sees the approved access_request:
+           - For dynamic engines (DB creds, GitHub App scope
+             expansion, etc.): Aga calls OpenBao to mint, receives
+             token + lease, writes lease-bound grant to Divan.
+           - For KV fallback (Sultan-pasted): Aga prompts Sultan
+             via Telegram for the token, stores in OpenBao KV,
+             writes grant with null lease.
+T+5s     Janissary picks up the new grant on its next poll;
+         Pasha's future requests to the new service get
+         credential injected.
+
+ CASE B: Kashif = "block"
+---------------------------------------------------
+T+2.2s   Divan stores access_request with status=denied,
+         kashif_verdict=block. Audit severity = ALERT.
+T+5s     Vizier sends INFORMATIONAL Telegram to Sultan:
+           "Prov backend-refactor's access request was
+            AUTO-BLOCKED by Kashif. Service: api.suspicious.xyz.
+            Justification: '<text>'. Kashif notes: '<...>'.
+            Decision is final; review if pattern repeats."
+T+5s     Aga polls Kashif-block audit; increments per-province
+         counter. If >= 3 blocks in 10 min, sends recommendation
+         to Sultan ("consider destroying prov-a1b2c3").
+T+next   Pasha's next request to api.suspicious.xyz still gets
+         403 from Janissary -- no grant, no whitelist.
+
+ CASE C: Kashif = "escalate" (or Kashif TIMEOUT)
+---------------------------------------------------
+T+2.2s   Divan stores access_request with status=pending,
+         kashif_verdict=escalate.
+T+5-10s  Vizier sends actionable Telegram (same as Case A) but
+         with escalate framing:
+           "Prov backend-refactor wants access to <service>.
+            Kashif: escalate (notes: '...'). NEEDS DECISION.
+            Approve / deny / kill province?"
+T+5-10s  Aga adds context, possibly with a recommendation
+         (e.g., "I'd lean deny -- this is the third unfamiliar
+         service this province has asked for in an hour").
+T+human  Sultan decides. Approve path follows Case A from the
+         "Aga sees the approved access_request" step onward.
+```
+
+**Difference from the appeal flow:** the appeal flow's allow path is
+auto-resolved by Divan (no Sultan involvement). The credential-request
+flow's allow path **always** involves Sultan, because granting a
+long-lived credential is more consequential than letting a single
+write through. Kashif's allow verdict only means "this text isn't
+malicious" -- it does not mean "Sultan would approve this token."
+
 ### Kill-switch (WireGuard down)
 
 ```
@@ -594,4 +685,4 @@ is ready to create provinces.
 - [ ] Vizier's DivanClient.wait_for_divan() succeeds
 - [ ] System ready: `vizier-cli create` command works
 - [ ] WireGuard server interface is up on Janissary (10.13.13.1)
-- [ ] Divan dashboard reachable at http://127.0.0.1:8601 (Sultan via SSH tunnel)
+- [ ] Divan dashboard reachable at `http://<host-tailscale-ip>:8601` from any device on Sultan's tailnet (or via SSH tunnel in fallback mode)

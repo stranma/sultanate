@@ -55,7 +55,9 @@ Sultan (Telegram)
   |     blacklist, appeals, port_requests, audit log
   |     Written by Vizier and Aga, read by Janissary and dashboard
   |     Dashboard: port 8601, Jinja2 + HTMX, HTTP basic auth,
-  |                bound to 127.0.0.1 (Sultan reaches via SSH tunnel)
+  |                bound to host's Tailscale interface (Sultan reaches
+  |                from phone/laptop on the tailnet; SSH-tunnel fallback
+  |                for non-Tailscale environments)
   |
   +-- Janissary (transparent proxy via WireGuard, dumb)
   |     Reads all state from Divan
@@ -220,8 +222,10 @@ to the Janissary role. See `DIVAN_API_SPEC.md` for details.
 
 **Dashboard:** server-rendered (Jinja2 + HTMX) inside the same FastAPI
 process. Eight pages: realm, province detail, province secrets, whitelist,
-appeals, audit, blacklist, health. HTTP basic auth + `127.0.0.1` binding
-on port 8601 (Sultan accesses via SSH tunnel). See `DIVAN_MVP_PRD.md`.
+appeals, audit, blacklist, health. HTTP basic auth + bound to the host's
+Tailscale interface on port 8601 (Sultan accesses from phone/laptop on
+the tailnet); `127.0.0.1` + SSH-tunnel fallback for non-Tailscale
+environments. See `DIVAN_MVP_PRD.md`.
 
 Divan ships with Janissary in the same repo. It starts before all other
 components except OpenBao.
@@ -321,7 +325,9 @@ closed.
 
 If Janissary is down, Vizier cannot reach Telegram -- Sultan loses the
 management channel. This is fail-closed by design. Sultan has SSH to the
-host as fallback (and the dashboard via SSH tunnel).
+host as fallback (the dashboard remains reachable via Tailscale even
+when Janissary is down, since Divan and the dashboard share a process
+that does not route through Janissary).
 
 ## Network Model
 

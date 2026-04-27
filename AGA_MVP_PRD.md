@@ -2,6 +2,10 @@
 
 > For shared glossary and architecture see [SULTANATE_MVP.md](SULTANATE_MVP.md).
 > For implementation detail see [AGA_SPEC.md](AGA_SPEC.md).
+> For the timeline-style flow diagrams that show where Aga sits in the
+> appeal-escalation and credential-request paths, see
+> [ARCHITECTURE.md](ARCHITECTURE.md) §2 (appeal flow) and §2.3
+> (mid-task credential request flow).
 
 ## What Aga Is
 
