@@ -87,8 +87,47 @@ Sultan (Telegram)
                   whitelisted per-province via Docker network rules
         Agent runtime: OpenClaw (open AI agent runtime, MIT,
                        multi-provider: Claude/OpenAI/OpenRouter/...).
-                       Gateway daemon on port 18789.
+                       Gateway daemon on port 18789 (loopback only).
+        Pasha <-> Sultan via dedicated per-province Telegram bot
+                  (one bot token per Pasha; provisioned by Vizier
+                   from a pre-allocated pool, returned on destroy).
 ```
+
+## Communication Channels
+
+Sultan talks to each agent via a dedicated Telegram bot. There are
+**2 + N bots** in MVP: one for Vizier, one for Aga, plus one per
+active province.
+
+| Bot | Speaks for | Lifecycle |
+|-----|-----------|-----------|
+| Vizier bot | Vizier (province lifecycle, escalated-appeal relay, Kashif-block notifications) | Long-lived; one per Sultanate deployment |
+| Aga bot | Aga (security alerts, port-request approvals, GitHub App bootstrap) | Long-lived; one per Sultanate deployment |
+| Pasha bot (one per province) | The Pasha inside that province (task chat, status, clarifications) | Acquired from a pre-allocated bot pool when the province is created; returned to the pool on destroy |
+
+Each bot's `channels.telegram.allowFrom` in OpenClaw config is set to
+Sultan's Telegram user ID, so only Sultan can reach the bot.
+
+**Trust property -- per-province blast radius.** A Pasha's bot token is
+scoped to that one province. Compromise of one Pasha's token (e.g., a
+rogue Pasha exfiltrates its own token, or a token leaks from the pool's
+storage):
+
+- lets an attacker chat *as that Pasha to Sultan* and read whatever
+  context Sultan typed in that thread
+- **cannot reach** any other Pasha's bot, Vizier's bot, or Aga's bot
+- **cannot read or write secrets** (those live in OpenBao, behind
+  Aga; the Pasha never had them in the first place)
+- **cannot bypass Janissary** -- still subject to the same WireGuard
+  + iptables kill-switch and traffic rules
+- **cannot mint, rotate, or read GitHub App tokens** (Aga's job, Aga's
+  OpenBao AppRole)
+
+Blast radius is bounded to that single province's chat thread. Sultan
+notices the impersonation by the Pasha behaving oddly; the response is
+to destroy the province via Vizier (which returns the bot to the pool
+for re-issue with a fresh token, after Sultan revokes the old one in
+BotFather).
 
 ## Trust Model
 
@@ -146,8 +185,11 @@ for MVP the minting logic lives in Aga itself, keyed off the App
 private key held in OpenBao KV.
 
 **Low-risk config** (Telegram bot tokens, public endpoints) -- Vizier
-writes directly into containers. A leaked bot token lets someone chat
-as the agent, not access code.
+writes directly into containers. A leaked Pasha bot token has a
+per-province blast radius (see Communication Channels above). A
+leaked Vizier or Aga bot token lets an attacker impersonate Sultan
+to that one agent, but they still cannot bypass Kashif on Aga
+ingress, cannot bypass Janissary, and cannot read OpenBao secrets.
 
 ## CA Certificate Lifecycle
 
