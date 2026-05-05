@@ -74,7 +74,7 @@ Sultan (Telegram)
   |     Models (all CPU): LLM Guard regex scanners + Prompt Guard 2
   |                       22M + Llama Guard 3 1B Q4
   |     Endpoints: POST /screen/appeal, POST /screen/ingress
-  |     Fail-closed: timeout or LLM down -> block + alert Sultan
+  |     Fail-closed: timeout or LLM down -> escalate + alert Sultan
   |
   +-- OpenBao (Secret Vault, single Go binary, local)
   |     Holds dangerous secrets (GitHub App tokens, DB creds,
@@ -308,15 +308,17 @@ See `OPENCLAW_FIRMAN_MVP_PRD.md`.
 ## Startup Order
 
 OpenBao must start first (and unseal) -- Aga depends on it for credentials
-to authenticate to everything else. Then Divan. Then Janissary + Kashif.
-Then Aga. Then Vizier. If any earlier component is down, later ones fail
+to authenticate to everything else. Then Divan. Then Kashif (must be
+healthy before Janissary, since Janissary forwards appeals to Kashif and
+would fail-closed on its first appeal otherwise). Then Janissary. Then
+Aga. Then Vizier. If any earlier component is down, later ones fail
 closed.
 
 ```
 1. OpenBao (Secret Vault; Sultan manually unseals)
 2. Divan (shared state + dashboard)
-3. Janissary (proxy, reads from Divan)
-4. Kashif (content inspector, loads three-layer models)
+3. Kashif (content inspector, loads three-layer models; ~10-30s cold boot)
+4. Janissary (proxy, reads from Divan; forwards appeals to Kashif)
 5. Aga (secrets, writes to Divan, direct networking; authenticates to
         OpenBao via AppRole)
 6. Vizier (management, writes to Divan, through Janissary)

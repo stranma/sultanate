@@ -259,7 +259,7 @@ is started last (step 8).
 | Non-root user + gosu | Bootstrap and berat commands run via `docker exec` (as root by default). Files written to `/opt/data/.openclaw` and `/opt/data/workspace` must be chowned to the non-root user so OpenClaw can read them. Vizier wraps each write with a `chown` in the same exec. |
 | `openclaw gateway` | Used as the startup command. OpenClaw reads `openclaw.json` from `$OPENCLAW_HOME/.openclaw/`, SOUL.md / AGENTS.md / IDENTITY.md from the configured workspace. |
 | MCP registry | Used by the berat to register the Janissary security MCP server for appeal/access-request tools. |
-| Channels config | Telegram channel configured via `channels.telegram.botTokenEnv` in openclaw.json; Vizier provisions a bot token per province. |
+| Channels config | Telegram channel configured via `channels.telegram.botToken` in openclaw.json; Vizier provisions a bot token per province. |
 | Sandbox mode | Set to `off` in the MVP berat; Sultanate's outer container (WireGuard + kill-switch) is the isolation boundary. Nested OpenClaw sandbox (Docker-in-Docker) is a Phase 2 option. |
 
 ## 6. Image Versioning

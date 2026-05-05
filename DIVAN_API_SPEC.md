@@ -9,12 +9,12 @@
 SQLite database + Python HTTP API (FastAPI). The JSON API listens on
 `0.0.0.0:8600` (reachable from other Sultanate containers on the
 internal Docker network). A server-rendered Jinja2/HTMX dashboard lives
-in the same process on the host's Tailscale interface IP at port `8601`
-(operator deploys Tailscale; Sultan reaches the dashboard from any
-device on the tailnet). Fallback path for non-Tailscale environments:
-bind to `127.0.0.1:8601` and SSH-tunnel. All component communication
-is JSON over HTTP. No TLS (trusted local network / Tailscale tailnet
-only).
+in the same process on port `8601`. By default the dashboard binds to
+the host's Tailscale interface on port 8601 (operator deploys Tailscale;
+Sultan reaches the dashboard from any device on the tailnet). If
+Tailscale is not available, the dashboard binds to `127.0.0.1:8601` and
+must be accessed via SSH tunnel. All component communication is JSON
+over HTTP. No TLS (trusted local network / Tailscale tailnet only).
 
 ## Authentication
 
@@ -26,10 +26,10 @@ Each key maps to a role:
 
 | Role | Key env var | Permissions |
 |------|-------------|-------------|
-| `vizier` | `DIVAN_KEY_VIZIER` | Read/write provinces, write whitelists (berat defaults), read appeals, write appeal decisions, write port_requests, write audit |
-| `aga` | `DIVAN_KEY_AGA` | Read provinces, read/write grants (including secret values), read/write whitelists, read/write blacklist, read/write appeal decisions, read/write port_requests, write audit |
-| `janissary` | `DIVAN_KEY_JANISSARY` | Read provinces, read grants (including secret values), read whitelists, read blacklist, write appeals, read appeal decisions, write audit |
-| `kashif` | `DIVAN_KEY_KASHIF` | Read appeals, write appeal `kashif_verdict`, write audit |
+| `vizier` | `DIVAN_KEY_VIZIER` | Read/write provinces, write whitelists (berat defaults), read appeals, write appeal decisions, read pending access_requests, write port_requests, write audit |
+| `aga` | `DIVAN_KEY_AGA` | Read provinces, read/write grants (including secret values), read/write whitelists, read/write blacklist, read/write appeal decisions, read pending access_requests, write access_request decisions, read/write port_requests, write audit |
+| `janissary` | `DIVAN_KEY_JANISSARY` | Read provinces, read grants (including secret values), read whitelists, read blacklist, write appeals, read appeal decisions, write access_requests (new), write audit |
+| `kashif` | `DIVAN_KEY_KASHIF` | Read appeals, write appeal `kashif_verdict`, read access_requests, write access_request `kashif_verdict`, write audit |
 | `dashboard` | `DIVAN_KEY_DASHBOARD` | Read everything (grant `inject.value` is always masked for this role); no writes |
 
 Grant secret values (`inject.value`) are only returned in plaintext for
@@ -498,6 +498,120 @@ Kashif verdict enum: `null`, `allow`, `block`, `escalate`.
 
 ---
 
+## Access Requests
+
+Mid-task credential requests from a province. Janissary creates an
+access request when an agent asks for credentials to a service it does
+not currently have a grant for. Kashif screens the justification text
+for prompt-injection / social-engineering signals. Sultan makes the
+final allow/deny decision (Kashif's `allow` verdict is necessary but
+not sufficient; see ARCHITECTURE.md section 2.3).
+
+### Create Access Request
+
+```
+POST /access_requests
+```
+
+```json
+{
+  "province_id": "prov-a1b2c3",
+  "service": "api.acme.com",
+  "scope": "write",
+  "justification": "Need to call the Acme task API to mark the issue resolved"
+}
+```
+
+`id` auto-generated. `status` defaults to `pending`. `kashif_verdict`
+defaults to `null`. Janissary role only. Returns `201`.
+
+### List Access Requests
+
+```
+GET /access_requests?status=pending
+GET /access_requests?province_id=prov-a1b2c3
+GET /access_requests?kashif_verdict=escalate
+```
+
+Returns `200` with array of access request objects. Filterable by
+`status`, `province_id`, and `kashif_verdict`. Vizier and Aga roles
+poll this endpoint for Sultan notifications and behavioural context
+respectively.
+
+### Set Kashif Verdict
+
+```
+PATCH /access_requests/{id}/kashif_verdict
+```
+
+```json
+{
+  "kashif_verdict": "allow",
+  "screened_at": "2026-04-23T11:00:05Z",
+  "notes": "Regex pass clean; Prompt Guard 2 score 0.04; Llama Guard 3 benign"
+}
+```
+
+Kashif role only.
+
+`kashif_verdict` enum: `allow`, `block`, `escalate`.
+
+Unlike appeals, an `allow` verdict on an access request does **not**
+auto-approve. Sultan still has to make the final decision because a
+credential grant is more consequential than a single one-time request.
+
+- `allow`: access request stays at `status: pending` with
+  `kashif_verdict: allow`. Audit severity = `info`. Vizier sends
+  actionable Telegram to Sultan.
+- `block`: Divan automatically transitions to `status: denied`.
+  Audit severity = `alert`. Sultan and Aga are notified
+  (informational). Decision is final.
+- `escalate`: stays at `status: pending`. Audit severity = `alert`.
+  Vizier sends actionable Telegram (escalate framing); Aga adds
+  context.
+
+### Resolve Access Request (Sultan)
+
+```
+PATCH /access_requests/{id}
+```
+
+```json
+{
+  "status": "approved"
+}
+```
+
+`status`: `approved` or `denied`. Aga role writes the decision based
+on Sultan's Telegram reply. On `approved`, Aga proceeds to mint or
+fetch the credential (dynamic OpenBao engine where available, or KV
+fallback) and writes the resulting grant via `POST /grants`.
+
+Returns `200` with updated access request object.
+
+### Access Request Object
+
+```json
+{
+  "id": "areq-p1q2r3",
+  "province_id": "prov-a1b2c3",
+  "service": "api.acme.com",
+  "scope": "write",
+  "justification": "Need to call the Acme task API to mark the issue resolved",
+  "status": "pending",
+  "kashif_verdict": null,
+  "kashif_notes": null,
+  "screened_at": null,
+  "created_at": "2026-04-23T11:00:00Z",
+  "resolved_at": null
+}
+```
+
+Status enum: `pending`, `approved`, `denied`.
+Kashif verdict enum: `null`, `allow`, `block`, `escalate`.
+
+---
+
 ## Port Requests
 
 Non-HTTP port declarations from berats, requiring Sultan approval.
@@ -675,11 +789,13 @@ Janissary's `appeal.one_time_timeout_minutes`). Janissary-role only.
 ## Dashboard Routes
 
 The dashboard is server-rendered HTML (Jinja2 + HTMX) hosted on the
-same FastAPI process as the JSON API, but bound to `127.0.0.1:8601`
-only. It uses HTTP basic auth (a single operator user, password set
-at deploy time and stored in `/opt/sultanate/dashboard.env`). Internally
-the dashboard calls the JSON API using the `dashboard` role key (grant
-values always masked).
+same FastAPI process as the JSON API. By default it binds to the host's
+Tailscale interface on port `8601`; if Tailscale is not available it
+binds to `127.0.0.1:8601` and must be accessed via SSH tunnel. It uses
+HTTP basic auth (a single operator user, password set at deploy time
+and stored in `/opt/sultanate/dashboard.env`). Internally the dashboard
+calls the JSON API using the `dashboard` role key (grant values always
+masked).
 
 | Path | Content |
 |------|---------|
@@ -758,6 +874,23 @@ CREATE INDEX idx_appeals_status ON appeals(status);
 CREATE INDEX idx_appeals_province_id ON appeals(province_id);
 CREATE INDEX idx_appeals_kashif_verdict ON appeals(kashif_verdict);
 
+CREATE TABLE access_requests (
+    id TEXT PRIMARY KEY,
+    province_id TEXT NOT NULL REFERENCES provinces(id),
+    service TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    justification TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    kashif_verdict TEXT,
+    kashif_notes TEXT,
+    screened_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    resolved_at TEXT
+);
+CREATE INDEX idx_access_requests_status ON access_requests(status);
+CREATE INDEX idx_access_requests_province_id ON access_requests(province_id);
+CREATE INDEX idx_access_requests_kashif_verdict ON access_requests(kashif_verdict);
+
 CREATE TABLE port_requests (
     id TEXT PRIMARY KEY,
     province_id TEXT NOT NULL REFERENCES provinces(id),
@@ -807,7 +940,7 @@ Divan reads from environment variables:
 |----------|---------|-------------|
 | `DIVAN_API_HOST` | `0.0.0.0` | JSON API listen address (internal Docker network) |
 | `DIVAN_API_PORT` | `8600` | JSON API listen port |
-| `DIVAN_DASHBOARD_HOST` | (operator-supplied) | Dashboard listen address. Recommended: the host's Tailscale interface IP (e.g., `100.x.y.z`) so Sultan can reach the dashboard from any device on the tailnet. Fallback for environments without Tailscale: `127.0.0.1` plus SSH tunnel. **Never bind to `0.0.0.0`.** |
+| `DIVAN_DASHBOARD_HOST` | (operator-supplied) | Dashboard listen address. By default the dashboard binds to the host's Tailscale interface IP (e.g., `100.x.y.z`) so Sultan can reach the dashboard from any device on the tailnet. If Tailscale is not available, the dashboard binds to `127.0.0.1` and must be accessed via SSH tunnel. **Never bind to `0.0.0.0`.** |
 | `DIVAN_DASHBOARD_PORT` | `8601` | Dashboard listen port |
 | `DIVAN_DB` | `/opt/sultanate/divan.db` | SQLite database path |
 | `DIVAN_ENV_FILE` | `/opt/sultanate/divan.env` | Component API keys file |

@@ -1342,17 +1342,35 @@ wg-quick up /opt/janissary/wg0.conf || {
 }
 echo "WireGuard interface up."
 
-# Wait for Divan to be healthy
-echo "Waiting for Divan..."
+# Bounded wait helpers: each dependency must come up within WAIT_TIMEOUT
+# seconds, otherwise Janissary exits non-zero (fail-closed) and Docker
+# restarts the container per the policy in section 11.
+WAIT_TIMEOUT=60
+
+# Wait for Divan to be healthy (Kashif must already be healthy via
+# docker-compose depends_on; Divan check is the first internal probe)
+echo "Waiting for Divan (timeout ${WAIT_TIMEOUT}s)..."
+ELAPSED=0
 until curl -sf http://127.0.0.1:8600/health > /dev/null 2>&1; do
+  if [ "$ELAPSED" -ge "$WAIT_TIMEOUT" ]; then
+    echo "FATAL: Divan did not become healthy within ${WAIT_TIMEOUT}s"
+    exit 1
+  fi
   sleep 1
+  ELAPSED=$((ELAPSED + 1))
 done
 echo "Divan is ready."
 
 # Wait for Kashif to be healthy
-echo "Waiting for Kashif..."
+echo "Waiting for Kashif (timeout ${WAIT_TIMEOUT}s)..."
+ELAPSED=0
 until curl -sf http://127.0.0.1:8082/health > /dev/null 2>&1; do
-  sleep 2
+  if [ "$ELAPSED" -ge "$WAIT_TIMEOUT" ]; then
+    echo "FATAL: Kashif did not become healthy within ${WAIT_TIMEOUT}s"
+    exit 1
+  fi
+  sleep 1
+  ELAPSED=$((ELAPSED + 1))
 done
 echo "Kashif is ready."
 
@@ -1384,14 +1402,20 @@ exec mitmdump \
 2. Divan starts (network_mode: host, port 8600 + dashboard 8601)
    +-- healthcheck: GET /health -> 200
 
-3. Janissary starts (depends_on: divan healthy, kashif healthy)
+3. Kashif starts after Divan and before Janissary
+   (depends_on: divan healthy; models load over ~10-30s)
+   +-- healthcheck: GET /health -> 200 after all three models resident
+
+4. Janissary starts (depends_on: divan healthy, kashif healthy)
    +-- janissary-entrypoint.sh:
    |   +-- Prepare mitmproxy CA confdir
    |   +-- Start WireGuard server interface (wg-quick up)
    |   |   +-- Success -> continue
    |   |   +-- Failure -> exit 1 (container fails, Docker restarts)
-   |   +-- Poll Divan /health until 200 (curl loop, 1s interval, 60s timeout)
-   |   +-- Poll Kashif /health until 200 (curl loop, 2s interval)
+   |   +-- Poll Divan /health until 200 (curl loop, 1s interval,
+   |   |   60s timeout, fail-closed exit 1 on timeout)
+   |   +-- Poll Kashif /health until 200 (curl loop, 1s interval,
+   |   |   60s timeout, fail-closed exit 1 on timeout)
    |   +-- Start appeal API (uvicorn, port 8081, background)
    |   +-- Start mitmdump (port 8080, foreground, transparent mode)
    |
@@ -1403,9 +1427,6 @@ exec mitmdump \
    |
    +-- healthcheck: GET /health on appeal API -> 200
        (only returns 200 after has_loaded = True)
-
-4. Kashif starts (parallel to Janissary; models load over ~10-30s)
-   +-- healthcheck: GET /health -> 200 after all three models resident
 
 5. Aga starts (depends_on: openbao, divan, janissary, kashif all healthy)
    +-- Authenticates to OpenBao via AppRole from /opt/aga/openbao.env

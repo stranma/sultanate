@@ -157,7 +157,7 @@ model is unresponsive.
 |-----------|---------|--------|
 | Any layer crashes mid-request | `escalate` | `reason: layer_error` |
 | Total pipeline >5 s | `escalate` | `reason: timeout` |
-| Kashif container unreachable (from Janissary's perspective) | Janissary writes `kashif_verdict=escalate` itself with `kashif_timeout=true` |
+| Kashif container unreachable (from Janissary's perspective) | `escalate` | Janissary writes `kashif_verdict=escalate` itself with `kashif_timeout=true` |
 | Kashif HTTP 5xx response | `escalate` | caller treats as unavailability |
 
 Never `allow` on failure. Never `block` on failure (a failure is not

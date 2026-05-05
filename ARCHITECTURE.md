@@ -272,7 +272,7 @@ Pasha             Janissary    Kashif        Divan      Vizier      Aga         
   |                 |            |--PromptGuard               |        |            |
   |                 |            |--LlamaGuard                |        |            |
   |                 |<--verdict--|             |           |          |            |
-  |                 |--POST /access_request -->|           |          |            |
+  |                 |--POST /access_requests ->|           |          |            |
   |<-- pending -----|            |             |           |          |            |
 ```
 
@@ -395,25 +395,28 @@ Vizier (OpenClaw agent, understands natural language)
 Aga (watches Divan)
    |
    |  9. Sees new province
-   | 10. Ask Sultan for GitHub token via Telegram
-   |     Sultan provides token
-   | 11. Store in OpenBao, receive lease ID
-   |     Write grant to Divan: POST /grants
+   | 10. Read GitHub App private key from OpenBao KV
+   | 11. Mint installation token via GitHub App
+   |     (1-hour TTL); receive openbao_lease_id and
+   |     lease_expires_at
+   | 12. Write lease-bound grant to Divan: POST /grants
    |     {source_ip, domain, inject, openbao_lease_id,
    |      lease_expires_at}
+   | 13. Schedule ~15 min auto-renewal while province
+   |     is running
    |
    v
 Vizier (continues)
    |
-   | 12. docker start wg-client-prov-XXXXXX
-   | 13. docker start sultanate-{name}
-   | 14. docker cp CA cert + update-ca-certificates
-   | 15. docker exec: clone repo (through Janissary)
-   | 16. docker exec: apply berat (SOUL.md, AGENTS.md,
+   | 14. docker start wg-client-prov-XXXXXX
+   | 15. docker start sultanate-{name}
+   | 16. docker cp CA cert + update-ca-certificates
+   | 17. docker exec: clone repo (through Janissary)
+   | 18. docker exec: apply berat (SOUL.md, AGENTS.md,
    |                               ~/.openclaw/openclaw.json)
-   | 17. docker exec: openclaw gateway --port 18789
+   | 19. docker exec: openclaw gateway --port 18789
    |
-   | 18. Update Divan: PATCH /provinces/{id} {status: running}
+   | 20. Update Divan: PATCH /provinces/{id} {status: running}
    |
    v
 Province is live, agent connects to Sultan via Telegram
@@ -427,19 +430,22 @@ Sultan: "Stop the EFM agent"         Sultan: "Destroy the EFM province"
    v                                    v
 Vizier (runs vizier-cli stop)        Vizier (runs vizier-cli destroy)
    |                                    |
-   | 1. docker stop sultanate-{name}    | 1. docker stop sultanate-{name}
-   | 2. docker stop wg-client-prov-XX   | 2. docker stop wg-client-prov-XX
-   | 3. PATCH /provinces/{id}           | 3. docker rm sultanate-{name}
-   |    {status: stopped}               | 4. docker rm wg-client-prov-XX
-   |                                    | 5. Remove WireGuard peer from
-   | (can restart later)                |    Janissary server config
-   |                                    | 6. DELETE /provinces/{id}
+   | 1. docker stop sultanate-{name}    | 1. PATCH /provinces/{id}
+   | 2. docker stop wg-client-prov-XX   |    {status: destroying}
+   | 3. PATCH /provinces/{id}           | 2. docker stop sultanate-{name}
+   |    {status: stopped}               | 3. docker stop wg-client-prov-XX
+   |                                    | 4. docker rm sultanate-{name}
+   | (can restart later)                | 5. docker rm wg-client-prov-XX
+                                        | 6. Remove WireGuard peer from
+                                        |    Janissary server config
                                         | 7. Aga revokes all OpenBao
                                         |    leases for this province;
                                         |    any it misses expires by
                                         |    TTL server-side anyway
                                         | 8. Cleanup host volume
                                         |    (or preserve for inspection)
+                                        | 9. PATCH /provinces/{id}
+                                        |    {status: destroyed}
 ```
 
 ---
@@ -675,13 +681,13 @@ is ready to create provinces.
 **Test assertions:**
 - [ ] OpenBao starts first (manual unseal by Sultan); /v1/sys/health returns 200
 - [ ] Divan starts, /health returns 200
-- [ ] Janissary starts, waits for Divan health, then /health returns 200
+- [ ] Kashif starts after Divan, loads all three screener layers (LLM Guard regex, Prompt Guard 2 22M, Llama Guard 3 1B Q4), /health returns 200; all three models resident
+- [ ] Janissary starts after Divan AND Kashif are healthy (since Janissary forwards appeals to Kashif); /health returns 200
 - [ ] Janissary in fail-closed mode until first Divan poll succeeds
 - [ ] Before first poll: any traffic through Janissary returns 503
 - [ ] After first poll: traffic rules applied normally
-- [ ] Kashif starts, loads all three screener layers (LLM Guard regex, Prompt Guard 2 22M, Llama Guard 3 1B Q4), /health returns 200; all three models resident
 - [ ] Aga starts (host networking, not through Janissary); authenticates to OpenBao via AppRole
-- [ ] Vizier starts after Janissary + Kashif healthy
+- [ ] Vizier starts after Janissary + Kashif + Aga healthy
 - [ ] Vizier's DivanClient.wait_for_divan() succeeds
 - [ ] System ready: `vizier-cli create` command works
 - [ ] WireGuard server interface is up on Janissary (10.13.13.1)

@@ -383,8 +383,8 @@ Sultan: "Store this for prov-a1b2c3, api.example.com:
 ```
 
 Aga:
-1. Screens the text through Kashif `/screen/ingress` (source=`pasha`
-   isn't quite right; use source=`sultan`). Abort if Kashif=`block`.
+1. Screens the Sultan-pasted text via Kashif `/screen/ingress` with
+   `source: sultan`; aborts if Kashif=`block`.
 2. Writes to OpenBao KV at
    `kv/data/provinces/prov-a1b2c3/api.example.com` with
    `{token: "xyz-secret-token"}`.
@@ -408,8 +408,8 @@ renewal map.
 - For dynamic-mode grants (GitHub App): no explicit revoke call
   needed; GitHub's 1-hour TTL will invalidate the token naturally
   if Aga does not renew it. For paranoia, Aga may call
-  `POST https://api.github.com/installation/token` to revoke
-  immediately.
+  `DELETE https://api.github.com/installation/token` to revoke
+  immediately (returns 204 No Content).
 - For KV-mode grants: delete from OpenBao KV:
 
 ```bash
@@ -588,8 +588,13 @@ No iptables changes. Audit entry (severity=info).
 ## 6. Whitelist and Blacklist Management
 
 Sultan instructs Aga via Telegram. Aga translates to Divan API calls.
-All incoming messages from Sultan are implicitly Sultan-authored (not
-Pasha-originated), so Kashif screening is not required.
+Routine Sultan commands (whitelist/blacklist edits, queries) skip
+Kashif: they are structured directives, not free-form content, so
+there is no prompt-injection surface to screen. Sultan-pasted *secret
+material* (e.g., the KV-fallback token-paste flow in §3) IS screened
+via Kashif `/screen/ingress` with `source: sultan` -- not because
+Sultan is untrusted, but to detect smuggled instructions or prompt
+injection embedded inside the pasted payload before Aga acts on it.
 
 ### Whitelist Operations
 
@@ -1103,8 +1108,8 @@ Per [SULTANATE_MVP.md](SULTANATE_MVP.md):
 ```
 1. OpenBao    (Secret Vault; Sultan manually unseals)
 2. Divan      (shared state + dashboard)
-3. Janissary  (proxy)
-4. Kashif     (content inspector)
+3. Kashif     (content inspector; healthy before Janissary)
+4. Janissary  (proxy; forwards appeals to Kashif)
 5. Aga        (this service)
 6. Vizier     (management)
 7. Provinces  (on demand)

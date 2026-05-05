@@ -119,8 +119,14 @@ def destroy(province: str) -> None:
 4. Remove the WireGuard peer from Janissary's `wg0.conf`
    (HUP Janissary to reload)
 5. Clean up host volume at `/opt/sultanate/provinces/{id}/data`
-6. `DELETE /grants?province_id={id}` (clean grants in Divan)
-7. (Aga sees status=destroying and does its own cleanup in parallel)
+6. (Grant cleanup happens in parallel via Aga's poll -- see note below.)
+
+> **Note on grant cleanup.** Grant cleanup is performed by Aga, which
+> polls Divan for `status=destroying` provinces and revokes all grants
+> for that province (see AGA_SPEC.md §4 Revocation). Vizier writes only
+> the province record state transition; Aga handles the grant side.
+> Vizier MUST NOT call `/grants` directly -- Aga is the sole writer and
+> deleter of grants in Divan.
 
 ### `vizier-cli logs`
 
@@ -152,30 +158,26 @@ A firman is a directory at `/opt/sultanate/firmans/{name}/` containing a
 
 ### firman.yaml Schema
 
+Canonical schema lives in [OPENCLAW_FIRMAN_SPEC.md §2](OPENCLAW_FIRMAN_SPEC.md).
+The example below mirrors that spec exactly.
+
 ```yaml
-# firman.yaml -- container template manifest
-apiVersion: firman/v1
-kind: Firman
-metadata:
-  name: openclaw-firman
-  description: "OpenClaw agent container template for Sultanate provinces"
-
-image:
-  repository: openclaw/openclaw
-  tag: "v2026.4.15"                          # pinned by digest in deploy
-
+name: openclaw-firman
+version: "0.1.0"
+description: "OpenClaw agent container template"
+image: "openclaw/openclaw:v2026.4.15"
+workspace_dir: "/opt/data/workspace"
+openclaw_home: "/opt/data"
 bootstrap:
-  # Commands run inside the container after start, before berat application.
-  # Executed sequentially via docker exec. Each is a shell command string.
-  commands:
-    - "update-ca-certificates"               # trust Sultanate CA cert
-
+  - command: "update-ca-certificates"
+    description: "Trust Sultanate CA in the system trust store"
+  - command: "git clone https://github.com/{{repo_name}}.git {{workspace_dir}}"
+    description: "Clone target repository"
+  - command: "cd {{workspace_dir}} && git checkout {{branch}}"
+    description: "Checkout branch"
 startup:
-  # Command to start the OpenClaw daemon inside the container.
-  # Executed via docker exec -d after berat is applied.
-  command: "openclaw gateway"
-  args: [ "--port", "18789" ]
-
+  command: "openclaw"
+  args: [ "gateway", "--port", "18789" ]
 defaults:
   branch: main
 ```
@@ -184,15 +186,18 @@ defaults:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `apiVersion` | string | yes | Always `firman/v1` |
-| `kind` | string | yes | Always `Firman` |
-| `metadata.name` | string | yes | Firman identifier, matches directory name |
-| `metadata.description` | string | no | Human-readable description |
-| `image.repository` | string | yes | Docker image repository |
-| `image.tag` | string | yes | Docker image tag |
-| `bootstrap.commands` | list[string] | no | Bootstrap commands run via `docker exec` |
-| `startup.command` | string | yes | OpenClaw startup command |
-| `startup.args` | list[string] | no | Arguments to startup command |
+| `name` | string | yes | Firman identifier, matches directory name |
+| `version` | string | yes | Semver. Logged by Vizier at province creation |
+| `description` | string | yes | Human-readable description |
+| `image` | string | yes | Docker image reference (`registry/repo:tag`); pinned, no `latest` |
+| `workspace_dir` | string | yes | Absolute path inside the container where the target repo is cloned |
+| `openclaw_home` | string | yes | Absolute path for OpenClaw state (maps to `OPENCLAW_HOME`) |
+| `bootstrap` | list | yes | Ordered list of `{command, description}` entries run via `docker exec` |
+| `bootstrap[].command` | string | yes | Shell command. Supports `{{variable}}` substitution |
+| `bootstrap[].description` | string | yes | Log label printed by Vizier during bootstrap |
+| `startup` | object | yes | Main process started via `docker exec -d` after bootstrap |
+| `startup.command` | string | yes | OpenClaw startup command (e.g. `openclaw`) |
+| `startup.args` | list[string] | yes | Arguments to startup command |
 | `defaults.branch` | string | no | Default branch (default: `main`) |
 
 ### Vizier Resolution
@@ -204,10 +209,12 @@ def load_firman(name: str) -> dict:
         raise click.ClickException(f"Firman not found: {name}")
     with open(path) as f:
         data = yaml.safe_load(f)
-    # Validate required fields
-    assert data["apiVersion"] == "firman/v1"
-    assert data["image"]["repository"]
-    assert data["image"]["tag"]
+    # Validate required fields (see OPENCLAW_FIRMAN_SPEC.md §2)
+    assert data["name"]
+    assert data["version"]
+    assert data["image"]
+    assert data["workspace_dir"]
+    assert data["openclaw_home"]
     assert data["startup"]["command"]
     return data
 ```
@@ -488,7 +495,7 @@ pasha_bot_token = bot_pool.acquire(province_id)
 #### Step (e): Create Docker containers
 
 ```python
-image = f"{firman_data['image']['repository']}:{firman_data['image']['tag']}"
+image = firman_data["image"]              # flat "repository:tag" string
 container_name = f"sultanate-{sanitize_name(province_name)}"
 sidecar_name = f"wg-client-{province_id}"
 host_volume = f"/opt/sultanate/provinces/{province_id}/data"
@@ -580,7 +587,11 @@ subprocess.run(["docker", "start", container_name], check=True)
 
 ```python
 # Run firman bootstrap commands
-for cmd in firman_data.get("bootstrap", {}).get("commands", []):
+for entry in firman_data.get("bootstrap", []):
+    cmd = entry["command"]
+    desc = entry.get("description", "")
+    if desc:
+        click.echo(f"[bootstrap] {desc}")
     subprocess.run(
         ["docker", "exec", container_name, "bash", "-c", cmd],
         check=True,
@@ -1232,14 +1243,14 @@ province containers on the host.
 
 ### Startup Order
 
-Vizier starts after OpenBao, Divan, Janissary, Kashif, and Aga are
+Vizier starts after OpenBao, Divan, Kashif, Janissary, and Aga are
 ready (see SULTANATE_MVP.md §Startup Order):
 
 ```
 1. OpenBao    (Secret Vault; Sultan manually unseals)
 2. Divan      (shared state + dashboard)
-3. Janissary  (proxy)
-4. Kashif     (content inspector)
+3. Kashif     (content inspector; healthy before Janissary)
+4. Janissary  (proxy; forwards appeals to Kashif)
 5. Aga        (secrets)
 6. Vizier     (this component)
 7. Provinces  (on demand)

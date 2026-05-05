@@ -43,8 +43,12 @@ Schemas and endpoints are in `DIVAN_API_SPEC.md`.
 
 Pre-shared API keys, one per component, generated at deploy time. Each
 key maps to a role with endpoint-level read/write permissions. Grant
-secret values (the `inject.value` field) are only returned to the
-Janissary role. The dashboard role reads everything but writes nothing.
+secret values (the `inject.value` field) are returned in plaintext to
+exactly two roles: `aga` (which writes the value when minting tokens
+and populating the grant) and `janissary` (which reads the value at
+injection time). All other roles -- `vizier`, `kashif`, `dashboard` --
+see the field as `"***"` (masked). The dashboard role reads everything
+but writes nothing.
 
 See `DIVAN_API_SPEC.md` for the role matrix.
 
@@ -73,28 +77,26 @@ not to replace the command path.
 
 **Auth + network:**
 
-Primary access: **Tailscale**. The operator installs Tailscale on the
-host and on the phone (or laptop). The dashboard listener binds to the
-host's Tailscale interface IP (e.g., `100.x.y.z:8601`). Sultan reaches
-the dashboard from any device on the same Tailscale tailnet by opening
-`http://100.x.y.z:8601` -- works seamlessly from a phone, no SSH
-client needed.
+The dashboard listener is **never bound to `0.0.0.0`**. It binds to
+exactly one of two interfaces, chosen at deploy time:
 
-- HTTP basic auth retained as a second factor (single user: Sultan,
-  password generated at deploy time and stored in
-  `/opt/sultanate/dashboard.env`).
-- Tailscale's identity-based ACL is the first factor: only devices on
-  Sultan's tailnet can route to the listener at all.
-- The dashboard listener is **never bound to `0.0.0.0`** -- only to
-  the Tailscale interface (or `127.0.0.1` in the fallback path below).
+- **Primary -- Tailscale interface IP** (e.g., `100.x.y.z:8601`). The
+  operator installs Tailscale on the host and on the phone (or laptop);
+  the listener is bound to the host's Tailscale interface IP. Sultan
+  reaches the dashboard from any device on the same Tailscale tailnet
+  by opening `http://100.x.y.z:8601` -- works seamlessly from a phone,
+  no SSH client needed. Tailscale's identity-based ACL is the first
+  factor: only devices on Sultan's tailnet can route to the listener at
+  all.
+- **Fallback -- `127.0.0.1:8601`** for environments where Tailscale is
+  not viable. The operator SSH-tunnels from their machine
+  (`ssh -L 8601:127.0.0.1:8601 sultan@host`, then `http://localhost:8601`).
+  Mobile UX is poor; this path is for development and recovery, not
+  day-to-day use.
 
-**Fallback (no-Tailscale environments):**
-
-If Tailscale is not viable, bind the dashboard to `127.0.0.1:8601` and
-SSH-tunnel from the operator's machine
-(`ssh -L 8601:127.0.0.1:8601 sultan@host`, then `http://localhost:8601`).
-Mobile UX is poor; this path is for development and recovery, not
-day-to-day use.
+In both modes, HTTP basic auth is retained as a second factor (single
+user: Sultan, password generated at deploy time and stored in
+`/opt/sultanate/dashboard.env`).
 
 Tailscale itself is an operator-installed dependency, not bundled with
 Sultanate. The deploy script reads the Tailscale interface IP at boot
@@ -118,8 +120,9 @@ On boot:
 1. Ensure SQLite file exists; run migrations (create tables if new).
 2. Bind FastAPI to `0.0.0.0:8600` (API) -- reachable from other
    Sultanate containers on the internal Docker network.
-3. Bind dashboard to `127.0.0.1:8601` (host-localhost only; Sultan
-   tunnels in).
+3. Bind dashboard to `${DIVAN_DASHBOARD_HOST}:8601` -- the Tailscale
+   interface IP in the primary path, or `127.0.0.1` in the SSH-tunnel
+   fallback. Never `0.0.0.0`.
 4. `/health` returns 200 when both listeners are up and SQLite is
    readable/writable.
 
@@ -132,8 +135,14 @@ If Divan is unreachable:
 - **Vizier** returns an error on any `vizier-cli` command that needs
   state.
 - **Aga** alerts Sultan via Telegram.
-- **Kashif** continues to screen (it's stateless) but its verdicts
-  are buffered in-process until Divan returns.
+- **Kashif** continues to screen (stateless), but writes its verdicts
+  to its caller's response only; if the caller cannot persist to Divan,
+  the appeal/access-request flow escalates to Sultan via Telegram
+  (Vizier polls Divan and degrades gracefully -- no in-process
+  buffering of verdicts).
+- **OpenBao sealed**: existing valid leases keep working; expired
+  leases fail closed at injection (Janissary blocks rather than
+  forwarding without the configured header).
 
 ## Phase 1 Scope
 
@@ -141,7 +150,7 @@ If Divan is unreachable:
 - All API endpoints listed in `DIVAN_API_SPEC.md`
 - Role-based access control via pre-shared keys
 - Dashboard pages listed above (read-only)
-- HTTP basic auth + 127.0.0.1 binding
+- HTTP basic auth + Tailscale-primary / 127.0.0.1-fallback binding (never `0.0.0.0`)
 - `/health` endpoint
 - SQLite single-file storage with daily on-host backups
 

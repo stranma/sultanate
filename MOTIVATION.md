@@ -56,4 +56,5 @@ Sultanate separates three concerns:
   screens appeals and trusted-agent ingress for malice, and a trusted
   security chief that manages secrets. The security layer is
   runtime-agnostic: it works the same whether the province runs
-  OpenClaw, OpenHands, CrewAI, or anything else.
+  OpenClaw (Phase 1), OpenHands (Phase 2), CrewAI (Phase 2), or any
+  other runtime added later.
