@@ -26,10 +26,10 @@ Evaluated in order per request:
 2. **Whitelist** -- domain on the source's allowlist? Pass all traffic
    (any HTTP method).
 3. **Read-only pass** -- GET or HEAD to a non-whitelisted domain? Pass.
-   Agents can browse, read docs, download packages.
+   Used for browsing, reading docs, downloading packages.
 4. **Write block** -- POST, PUT, PATCH, DELETE to a non-whitelisted
-   domain? Block. Return 403 with a message pointing the agent to the
-   appeal tool.
+   domain? Block. Return 403 with a message pointing to the appeal
+   tool.
 
 Janissary does not inspect payloads, evaluate content, or make judgment
 calls. It reads tables and applies them by source IP.

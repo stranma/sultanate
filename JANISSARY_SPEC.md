@@ -865,9 +865,11 @@ Request new credentials or permanent whitelist addition.
 3. If Kashif=block: respond `403 { status: "denied", reason: "blocked by Kashif" }`.
    Audit entry severity=alert. Sultan+Aga notified via polling (see
    SULTANATE_MVP.md appeal flow).
-4. If Kashif=allow or escalate: write to Divan
-   (`POST /access_requests` -- a variant of appeals, or overload
-   `/appeals` with a special URL scheme `access-request://{service}`).
+4. If Kashif=allow or escalate: write to Divan via
+   `POST /access_requests` (the canonical resource for credential /
+   access provisioning, distinct from `/appeals` which is for
+   one-time write-block exceptions). See `DIVAN_API_SPEC.md` Access
+   Requests section for the full schema.
 5. Vizier picks it up and routes to Sultan via Telegram.
 
 **Response (202):**

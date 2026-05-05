@@ -168,7 +168,7 @@ fallback below -- but GitHub is fully automated.)
   hard-capped TTL of 1 hour. Aga writes the grant to Divan with an
   Aga-generated lease ID (`github-app:prov-XXXXXX`) and the
   `lease_expires_at` returned by GitHub. A background renewal loop in
-  Aga refreshes every ~30 min while the province is running, stops
+  Aga refreshes every ~15 min while the province is running, stops
   refreshing on destroy, and GitHub kills the token within 1 hour
   naturally. Janissary checks expiry before injecting and fails
   closed on expired (audit entry, `severity=alert`).

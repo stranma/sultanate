@@ -266,7 +266,7 @@ installation needs to grow to cover a new repo.
 Pasha             Janissary    Kashif        Divan      Vizier      Aga         Sultan
   |                  |            |             |           |          |            |
   |-- request_access(service, scope, justification) MCP call           |            |
-  |--POST /api/req->|            |             |           |          |            |
+  |--POST /api/request_access ->|             |           |          |            |
   |                 |--screen/ingress(text)-->|             |          |            |
   |                 |            |--regex     |             |          |            |
   |                 |            |--PromptGuard               |        |            |

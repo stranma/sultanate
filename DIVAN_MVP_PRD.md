@@ -1,8 +1,7 @@
 # PRD: Divan MVP -- Shared State Store and Dashboard
 
-> For shared glossary, deployment model, and component overview see
-> [SULTANATE_MVP.md](SULTANATE_MVP.md). For HTTP contract detail see
-> [DIVAN_API_SPEC.md](DIVAN_API_SPEC.md).
+> For shared glossary and architecture see [SULTANATE_MVP.md](SULTANATE_MVP.md).
+> For HTTP contract detail see [DIVAN_API_SPEC.md](DIVAN_API_SPEC.md).
 
 ## What Divan Is
 
