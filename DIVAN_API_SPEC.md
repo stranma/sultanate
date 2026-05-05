@@ -227,16 +227,31 @@ Returns `200` with `{ "data": { "deleted": <count> } }`.
 Janissary MUST compare `lease_expires_at` against current UTC time
 before injecting. If the lease has expired:
 
-- Skip injection (fail closed).
-- Log an audit entry with `credential_injected: false` and
-  `reason: "lease_expired"`.
-- The request itself is not blocked (the upstream service will
-  respond with a `401`/`403`, signalling to the agent that the token
-  is stale); Aga sees the audit entry and re-issues.
+- **Block the request at the proxy.** Janissary returns `503 Service
+  Unavailable` to the Pasha with body
+  `{"error": "credential_renewing", "domain": "<host>", "lease_expired_at": "<timestamp>"}`.
+  The request is NOT forwarded upstream -- pass-through would violate
+  the fail-closed contract (CLAUDE.md "never propose pass-through on
+  degraded service").
+- Write an audit entry with `severity=alert`, `component=janissary`,
+  `action=lease_expired_block`, including the `grant_id`,
+  `province_id`, `domain`, and `lease_expires_at`.
+- Aga's audit-alert poll (every ~30 s; see `AGA_SPEC.md` §9) picks up
+  the alert and renews the credential immediately (out-of-band of
+  its proactive 15-min lease-renewal loop). Recovery time = up to
+  ~30-60 s (Aga's poll interval + GitHub mint round-trip + Janissary
+  cache refresh).
+- Pasha sees the 503 and retries; the second attempt (after Aga's
+  renewal) injects the fresh credential and proceeds.
 
-Aga renews leases before expiry by re-reading the OpenBao lease,
-updating `inject.value` and `lease_expires_at` in place via
-`PATCH /grants/{id}`.
+Grants with `lease_expires_at: null` (KV-fallback tokens with no
+expiry) bypass the expiry check entirely and inject unconditionally.
+
+Aga's proactive renewal loop (every ~15 min) re-reads the underlying
+credential source, updates `inject.value` and `lease_expires_at` in
+place via `PATCH /grants/{id}` -- this is the normal path; the
+audit-alert path above is a recovery mechanism for missed proactive
+renewals.
 
 ### Update Grant (Lease Renewal)
 

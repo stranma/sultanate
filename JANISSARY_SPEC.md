@@ -693,25 +693,45 @@ still valid**, and inject the header.
 
 ```python
 def _inject_credentials(self, flow: http.HTTPFlow, source_ip: str) -> dict:
-    """Returns audit detail dict describing the injection decision."""
+    """Inject credentials, or block the request at the proxy if lease expired.
+
+    Returns audit detail dict describing the decision. If the lease has
+    expired, sets flow.response to 503 directly (the caller does not
+    forward upstream).
+    """
     host = self._normalize_domain(flow.request.pretty_host)
     grant = self.state.get_grant(source_ip, host)
     if grant is None:
         return {"credential_injected": False, "grant_id": None}
 
-    # Lease expiry check (Aga-driven renewal happens async; if we see an
-    # expired lease here, Aga hasn't renewed yet -- fail closed).
+    # Lease expiry check. CLAUDE.md: never pass-through on degraded
+    # service. If the lease has expired, block the request at the
+    # proxy with 503 and an alert-severity audit; Aga's audit-alert
+    # poll (~30s) renews and Pasha succeeds on retry.
     if grant.lease_expires_at is not None:
         now = datetime.now(timezone.utc)
         if grant.lease_expires_at <= now:
-            # Skip injection. Do NOT block the request: upstream will return
-            # 401/403 naturally, signalling to the agent that the token is
-            # stale. Aga sees our audit entry and re-issues.
+            flow.response = http.Response.make(
+                503,
+                json.dumps({
+                    "error": "credential_renewing",
+                    "domain": host,
+                    "lease_expired_at": grant.lease_expires_at.isoformat(),
+                    "message": (
+                        "Credential lease has expired. Aga is being "
+                        "alerted to renew. Retry the request in ~30-60 s."
+                    ),
+                }),
+                {"Content-Type": "application/json"},
+            )
             return {
                 "credential_injected": False,
                 "grant_id": grant.openbao_lease_id,
                 "lease_expired": True,
                 "lease_expires_at": grant.lease_expires_at.isoformat(),
+                "blocked_at_proxy": True,
+                "audit_severity": "alert",
+                "audit_action": "lease_expired_block",
             }
 
     # Add or replace the header specified in the grant
@@ -724,9 +744,19 @@ def _inject_credentials(self, flow: http.HTTPFlow, source_ip: str) -> dict:
 ```
 
 Grants where `lease_expires_at` is `None` (KV-mode grants for Sultan-
-provided tokens with no dynamic lease) bypass the expiry check and inject
-unconditionally. See `SULTANATE_MVP.md` credential model for KV vs
-dynamic mode.
+provided tokens with no dynamic lease) bypass the expiry check and
+inject unconditionally. See `SULTANATE_MVP.md` credential model for KV
+vs dynamic mode.
+
+The 503 path is the **fail-closed recovery handshake**: Janissary
+blocks → audit alert → Aga renews → Pasha retries → succeeds. Total
+recovery latency is bounded by Aga's audit-alert poll interval
+(~30 s) plus the renewal round-trip (~1-2 s for GitHub App mint),
+well under a minute in practice. This is intentionally distinct from
+upstream-rejected-401: a bare 401 from upstream tells the Pasha "your
+auth is wrong" and may trigger noisy retry loops; the 503 from the
+proxy is unambiguous ("the platform is renewing your credential, try
+again shortly").
 
 ### Request flow
 

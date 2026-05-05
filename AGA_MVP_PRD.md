@@ -102,7 +102,9 @@ component-role permissions).
      source_ip: "10.13.13.5",
      match: { domain: "api.github.com" },
      inject: { header: "Authorization", value: "<token>" },
-     openbao_lease_id: "github-app:prov-a1b2c3",
+     openbao_lease_id: null,                 // GitHub App tokens are
+                                             // minted by Aga directly,
+                                             // not by an OpenBao engine
      lease_expires_at: "<GitHub's expires_at>"
    }
    Additional grant for github.com (git clone/push over HTTPS) with

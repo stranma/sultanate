@@ -165,8 +165,11 @@ fallback below -- but GitHub is fully automated.)
   Aga holds the GitHub App private key in OpenBao KV. When a province
   is created (or needs rotation), Aga mints a GitHub App installation
   access token scoped to the province's repo, with GitHub's
-  hard-capped TTL of 1 hour. Aga writes the grant to Divan with an
-  Aga-generated lease ID (`github-app:prov-XXXXXX`) and the
+  hard-capped TTL of 1 hour. Aga writes the grant to Divan with
+  `openbao_lease_id: null` (the field is reserved for grants backed by
+  real OpenBao lease-issuing secret engines -- DB creds, SSH CA, PKI,
+  future plugins -- and GitHub App tokens are minted by Aga directly
+  via the GitHub API, not by an OpenBao engine) and the
   `lease_expires_at` returned by GitHub. A background renewal loop in
   Aga refreshes every ~15 min while the province is running, stops
   refreshing on destroy, and GitHub kills the token within 1 hour
@@ -275,7 +278,7 @@ substitution. See `OPENCLAW_CODING_BERAT_MVP_PRD.md`.
      "source_ip": "10.13.13.5",
      "match":  { "domain": "api.github.com" },
      "inject": { "header": "Authorization", "value": "<token>" },
-     "openbao_lease_id":  "github-app:prov-a1b2c3",
+     "openbao_lease_id":  null,
      "lease_expires_at":  "<token-expiry from GitHub>"
    }
    ```

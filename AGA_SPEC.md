@@ -283,16 +283,21 @@ Request for `api.github.com`:
   "source_ip": "10.13.13.5",
   "match":  { "domain": "api.github.com" },
   "inject": { "header": "Authorization", "value": "Bearer <token>" },
-  "openbao_lease_id": "github-app:prov-a1b2c3",
+  "openbao_lease_id": null,
   "lease_expires_at": "2026-04-23T11:30:00Z"
 }
 ```
 
-Repeat for `github.com` with the same token value. The
-`openbao_lease_id` is an Aga-generated opaque identifier
-(`github-app:{province_id}` by convention), not a real OpenBao lease
--- it just lets Aga track which OpenBao state backs the grant.
-`lease_expires_at` is the real GitHub-returned `expires_at`.
+Repeat for `github.com` with the same token value. `openbao_lease_id`
+is **null** for GitHub App grants -- the field is reserved for grants
+backed by real OpenBao lease-issuing secret engines (DB creds, SSH
+CA, PKI, future dynamic plugins). GitHub App installation tokens are
+minted by Aga directly via the GitHub API (Aga reads the App private
+key from OpenBao KV but the token itself never goes through OpenBao's
+lease machinery). `lease_expires_at` is populated either way -- it is
+the real GitHub-returned `expires_at` for App tokens, the real
+OpenBao lease TTL for dynamic-engine credentials, and `null` for
+KV-fallback tokens with no expiry.
 
 **Step 5 -- Write default whitelist to Divan:**
 
@@ -910,17 +915,34 @@ loop:
       run §7 context build + Telegram send
     last_appeal_check = now
 
-  # 4. Kashif block counter poll (every 30 s, throttled)
-  if now - last_kashif_audit_check > 30 s:
-    blocks = GET /audit?severity=alert&component=kashif&since=last_kashif_audit_check
-    for block in blocks:
-      kashif_block_counts[block.province_id].append((block.created_at, block.detail))
-    for province_id, deque in kashif_block_counts.items():
-      recent = [t for (t, _) in deque if now - t < 10 min]
-      if len(recent) >= 3:
-        send unsolicited Telegram alert (deduped; mute for 15 min after sending)
+  # 4. Audit-alert poll (every 30 s, throttled)
+  #    Unified handler for ALL severity=alert audit entries:
+  #    - Kashif blocks (component=kashif, verdict=block)
+  #    - Lease-expired blocks at Janissary
+  #      (component=janissary, action=lease_expired_block)
+  #    - Future alert sources
+  if now - last_audit_alert_check > 30 s:
+    alerts = GET /audit?severity=alert&since=last_audit_alert_check
+    for alert in alerts:
+      if alert.component == "kashif" and alert.detail.verdict == "block":
+        # Pasha drift counter
+        kashif_block_counts[alert.province_id].append(
+            (alert.created_at, alert.detail))
+        recent = [t for (t, _) in kashif_block_counts[alert.province_id]
+                  if now - t < 10 min]
+        if len(recent) >= 3:
+          send unsolicited Telegram alert
+              (deduped; mute for 15 min after sending)
+      elif alert.component == "janissary" \
+          and alert.action == "lease_expired_block":
+        # Out-of-band lease renewal -- Aga's proactive 15-min renewal
+        # missed this grant; renew immediately so Pasha's retry succeeds.
+        grant_id = alert.detail.grant_id
+        province_id = alert.province_id
+        run §4 renewal flow for grant_id (immediate, not scheduled)
+        log "expedited renewal for grant_id triggered by Janissary alert"
     save kashif_block_counts to disk
-    last_kashif_audit_check = now
+    last_audit_alert_check = now
 
   # 5. Port request poll (every 10 s, throttled)
   if now - last_port_check > 10 s:

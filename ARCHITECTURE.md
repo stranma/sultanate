@@ -16,10 +16,10 @@
         | (OpenClaw)     |              |   (OpenClaw)    |
         | vizier user    |              | root            |
         +---+----+---+---+              +---+----+--------+
-            |    |   |                      |    |
-  Docker    |    |   | Divan API            |    | Divan API
-  socket    |    |   |                      |    |
-   +--------+   |   |    +-----------+      |    |
+            |    |   |                       |    |
+  Docker    |    |   | Divan API             |    | Divan API
+  socket    |    |   |                       |    |
+   +--------+    |   |    +-----------+      |    |
    |             |   +--->|           |<-----+    |
    |             |        |   Divan   |           |
    |   Telegram  |        | SQLite +  |           | OpenBao
@@ -397,11 +397,12 @@ Aga (watches Divan)
    |  9. Sees new province
    | 10. Read GitHub App private key from OpenBao KV
    | 11. Mint installation token via GitHub App
-   |     (1-hour TTL); receive openbao_lease_id and
-   |     lease_expires_at
-   | 12. Write lease-bound grant to Divan: POST /grants
-   |     {source_ip, domain, inject, openbao_lease_id,
-   |      lease_expires_at}
+   |     (1-hour TTL); receive token + expires_at
+   | 12. Write lease-aware grant to Divan: POST /grants
+   |     {source_ip, domain, inject,
+   |      openbao_lease_id: null,    // GitHub App tokens
+   |                                  // bypass OpenBao engines
+   |      lease_expires_at: <GitHub expires_at>}
    | 13. Schedule ~15 min auto-renewal while province
    |     is running
    |
@@ -476,7 +477,7 @@ workspace cloned, and able to receive instructions.
 - [ ] Province container is running (`docker ps`)
 - [ ] wg-client sidecar is running
 - [ ] Divan has province record with status=running and assigned IP
-- [ ] Divan has at least one grant for the province (GitHub token) with valid `openbao_lease_id`
+- [ ] Divan has at least one grant for the province (GitHub token) with `openbao_lease_id: null` (GitHub App tokens are not OpenBao-lease-backed) and a future-dated `lease_expires_at` from GitHub
 - [ ] Province can reach api.github.com through Janissary (curl from inside)
 - [ ] Repo is cloned into /opt/data/workspace
 - [ ] SOUL.md, AGENTS.md, and ~/.openclaw/openclaw.json written from berat templates

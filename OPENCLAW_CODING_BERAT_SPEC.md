@@ -133,7 +133,7 @@ flow:
      "match":  { "domain": "api.github.com" },
      "inject": { "header": "Authorization",
                  "value":  "Bearer <token>" },
-     "openbao_lease_id": "github-app:prov-a1b2c3",
+     "openbao_lease_id": null,
      "lease_expires_at": "<token-expiry>"
    }
    ```
@@ -473,7 +473,7 @@ to these domains. Sultan can later expand or restrict via Aga.
      "match":       { "domain": "api.github.com" },
      "inject":      { "header": "Authorization",
                       "value":  "Bearer <token>" },
-     "openbao_lease_id": "github-app:prov-a1b2c3",
+     "openbao_lease_id": null,
      "lease_expires_at": "<token-expiry from GitHub>"
    }
    ```
